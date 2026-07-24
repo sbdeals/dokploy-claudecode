@@ -134,10 +134,13 @@ dashboard container gets its credentials without hand-edited env files).
 | `localIngressHttpPort` | `8080` | Host HTTP port for the demo proxy |
 | `localIngressHttpsPort` | `8443` | Host HTTPS port for the demo proxy |
 | `adminName` / `adminEmail` / `adminPassword` | — | The Dokploy admin the dashboard signs in with |
+| `sessionSecret` | `""` (generated at install) | CSPRNG secret that signs the dashboard's session cookie |
 | `image` | `ghcr.io/sbdeals/switchyard` | Dashboard image repo |
 | `imageTag` | `""` (= CLI version) | Pin a dashboard image tag |
 | `dokployUrlInContainer` | `http://dokploy:3000` | How the container reaches Dokploy (service DNS) |
 | `hostIp` | `""` (auto-detected on Linux) | Host public/advertise IP handed to the dashboard as `SWITCHYARD_HOST_IP` so app deploys mint an auto-URL (traefik.me / sslip.io) with no DNS. `""` disables auto-URL (Docker Desktop / dev). Override with `config set hostIp <ip>` |
+| `store` | `true` | Provision the `switchyard-metrics` Postgres so dashboard metrics persist; `false` turns the store off |
+| `storePassword` | `""` (generated once) | CSPRNG password for the `switchyard-metrics` Postgres |
 
 Change a setting and apply it in one step — `set` recreates the container
 when the value affects it:

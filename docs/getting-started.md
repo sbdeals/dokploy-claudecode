@@ -79,7 +79,13 @@ installs — is in [cli.md](cli.md).
 | `dokploy-postgres` | `postgres:16`     | Swarm service   | internal only            |
 | `dokploy-redis`    | `redis:7`         | Swarm service   | internal only            |
 | `dokploy-traefik`  | `traefik:v3.6.7`  | plain container | **80/443** (reverse proxy) |
+| `switchyard-metrics` | `postgres:16`   | Swarm service   | internal only            |
 | Switchyard         | `ghcr.io/sbdeals/switchyard` (fast path) or Next.js dev server (manual) | container / node process | **3001** |
+
+`switchyard-metrics` is the dashboard's persisted metrics store, deployed by
+the CLI fast path (turn it off with `switchyard config set store false`). On
+Docker Desktop, `dokploy-traefik` is skipped by default: `skipTraefik`
+defaults to `true` there (see [cli.md](cli.md)).
 
 Everything Dokploy-side attaches to the `dokploy-network` overlay network.
 Credentials live in two Swarm secrets, `dokploy_postgres_password` and
