@@ -55,14 +55,30 @@ async function fetchHistory(
 export function MetricsTab({ appName, active }: { appName: string; active: boolean }) {
   const [data, setData] = useState<Sample[]>([]);
   const [idle, setIdle] = useState(false);
+  // The live stats stream couldn't be attached (Docker error) — distinct from
+  // idle (container simply not running).
+  const [unavailable, setUnavailable] = useState(false);
   const [range, setRange] = useState<RangeId>("live");
   // null = unknown (still probing); false = no durable store configured.
   const [storeOn, setStoreOn] = useState<boolean | null>(null);
 
+  // Reset the live buffer when the series identity (service or range) changes.
+  // Done during render, not in the effect below: calling setState synchronously
+  // inside an effect body triggers a cascading re-render
+  // (react-hooks/set-state-in-effect) and briefly flashes the previous series'
+  // samples. Adjusting state during render on a changed key is the supported
+  // React pattern for this.
+  const seriesKey = `${appName}|${range}`;
+  const [prevKey, setPrevKey] = useState(seriesKey);
+  if (seriesKey !== prevKey) {
+    setPrevKey(seriesKey);
+    setData([]);
+    setIdle(false);
+    setUnavailable(false);
+  }
+
   useEffect(() => {
     if (!active || !appName) return;
-    setIdle(false);
-    setData([]);
     const ac = new AbortController();
     let es: EventSource | null = null;
 
@@ -80,6 +96,7 @@ export function MetricsTab({ appName, active }: { appName: string; active: boole
     if (range === "live") {
       es = new EventSource(`/api/services/metrics?app=${encodeURIComponent(appName)}`);
       es.addEventListener("idle", () => setIdle(true));
+      es.addEventListener("unavailable", () => setUnavailable(true));
       es.onmessage = (e) => {
         try {
           const s = JSON.parse(e.data) as Sample;
@@ -123,11 +140,16 @@ export function MetricsTab({ appName, active }: { appName: string; active: boole
           ))}
         </div>
         {range === "live" && storeOn === false && (
-          <span className="text-[10px] text-[var(--color-fg-subtle)]">history off</span>
+          <span
+            className="cursor-help text-[10px] text-[var(--color-fg-subtle)] underline decoration-dotted underline-offset-2"
+            title="Metric history isn't being recorded. It needs the Switchyard metrics store — re-run `switchyard up` (the store is on by default), or set SWITCHYARD_STORE_URL when running the dashboard from source."
+          >
+            history off
+          </span>
         )}
       </div>
 
-      {!(idle && range === "live") && (
+      {!((idle || unavailable) && range === "live") && (
         <>
           <div className="grid grid-cols-2 gap-3">
             <Stat
@@ -156,12 +178,16 @@ export function MetricsTab({ appName, active }: { appName: string; active: boole
           <div className="flex h-40 items-center justify-center text-sm text-[var(--color-fg-subtle)]">
             No metrics — the service isn&apos;t running.
           </div>
+        ) : unavailable && range === "live" ? (
+          <div className="flex h-40 items-center justify-center text-sm text-[var(--color-fg-subtle)]">
+            Metrics unavailable — couldn&apos;t read container stats from Docker.
+          </div>
         ) : (
           <>
             {historyEmpty && (
               <div className="flex items-center justify-center text-xs text-[var(--color-fg-subtle)]">
                 {storeOn === false
-                  ? "Metric history needs the Switchyard store (SWITCHYARD_STORE_URL)."
+                  ? "Metric history needs the Switchyard store. Re-run `switchyard up` (the store is on by default), or set SWITCHYARD_STORE_URL to record history."
                   : "No metrics recorded in this range yet."}
               </div>
             )}

@@ -54,27 +54,40 @@ type BackupEngine = Exclude<Database["engine"], "redis">;
 function BackupsPanel({ db, engine }: { db: Database; engine: BackupEngine }) {
   const [destinations, setDestinations] = useState<S3Destination[]>([]);
   const [backups, setBackups] = useState<DatabaseBackup[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [initialised, setInitialised] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [, startLoad] = useTransition();
 
-  const refresh = useCallback(async () => {
-    setLoadError(null);
-    const [dRes, bRes] = await Promise.all([
-      listDestinationsAction(),
-      listDatabaseBackupsAction(engine, db.id),
-    ]);
-    if (dRes.ok) setDestinations(dRes.destinations);
-    else setLoadError(dRes.error);
-    if (bRes.ok) setBackups(bRes.backups);
-    else setLoadError((e) => e ?? bRes.error);
-    setLoading(false);
-  }, [engine, db.id]);
+  // The fetch + its state updates run inside startTransition so this stays safe
+  // to call from the mount effect below (react-hooks/set-state-in-effect). The
+  // returned promise resolves when the load settles, so the child sections can
+  // still `await onChange()` after a mutation.
+  const refresh = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        startLoad(async () => {
+          const [dRes, bRes] = await Promise.all([
+            listDestinationsAction(),
+            listDatabaseBackupsAction(engine, db.id),
+          ]);
+          let err: string | null = null;
+          if (dRes.ok) setDestinations(dRes.destinations);
+          else err = dRes.error;
+          if (bRes.ok) setBackups(bRes.backups);
+          else err = err ?? bRes.error;
+          setLoadError(err);
+          setInitialised(true);
+          resolve();
+        });
+      }),
+    [engine, db.id],
+  );
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  if (loading) {
+  if (!initialised) {
     return (
       <div className="flex items-center gap-2 text-xs text-[var(--color-fg-subtle)]">
         <Loader2 className="size-4 animate-spin" /> Loading backups…

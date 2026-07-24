@@ -517,9 +517,12 @@ function SqlView({ app, targetKey }: { app: string; targetKey: string }) {
       {result && !error && (
         <div className="flex min-h-0 flex-1 flex-col">
           {result.columns.length === 0 ? (
-            <p className="text-xs text-[var(--color-fg-subtle)]">
+            <pre
+              aria-live="polite"
+              className="whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 font-mono text-xs text-[var(--color-fg-muted)]"
+            >
               {result.messages || "Statement executed."}
-            </p>
+            </pre>
           ) : (
             <ResultGrid columns={result.columns} rows={result.rows} />
           )}

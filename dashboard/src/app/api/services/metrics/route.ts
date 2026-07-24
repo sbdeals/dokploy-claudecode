@@ -22,7 +22,19 @@ export async function GET(request: Request) {
   }
   if (!allowed.has(app)) return new Response("unknown app", { status: 403 });
 
-  const src = await followStats(app, allowed);
+  // Attach to the container's stats stream. A Docker hiccup (socket stalled,
+  // daemon mid-restart, op timeout) makes followStats reject; without this guard
+  // the route would 500 and the browser's EventSource would retry forever with
+  // no data — leaving the tab stuck on "sampling…". Emit a terminal `unavailable`
+  // event instead so the client can show an honest message.
+  let src: Awaited<ReturnType<typeof followStats>>;
+  try {
+    src = await followStats(app, allowed);
+  } catch (e) {
+    unstable_rethrow(e);
+    console.warn(`[metrics] followStats failed for ${app}:`, e instanceof Error ? e.message : e);
+    return sseOnce(`event: unavailable\ndata: {}\n\n`);
+  }
   if (!src) return sseOnce(`event: idle\ndata: {}\n\n`);
 
   return sseFromLines(src, request, (line) => {

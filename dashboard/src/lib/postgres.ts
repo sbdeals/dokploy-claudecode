@@ -168,6 +168,46 @@ export function parseCsv(text: string): Grid {
   return { columns, rows: records };
 }
 
+// --- command-tag detection ---------------------------------------------------
+
+/**
+ * Leading keywords of psql command tags — the status line psql prints on stdout
+ * for a statement that returns NO row set (`UPDATE 1`, `INSERT 0 1`,
+ * `CREATE TABLE`, `DROP TABLE`, …). Deliberately excludes the tuple-returning
+ * leaders (SELECT/SHOW/EXPLAIN/TABLE/VALUES/WITH) so a real result set is never
+ * mistaken for a status line.
+ */
+const COMMAND_TAG_LEADERS =
+  "INSERT|UPDATE|DELETE|MERGE|MOVE|FETCH|COPY|CREATE|DROP|ALTER|TRUNCATE|" +
+  "GRANT|REVOKE|COMMENT|SECURITY|BEGIN|COMMIT|ROLLBACK|START|SAVEPOINT|" +
+  "RELEASE|SET|RESET|DISCARD|DO|CALL|VACUUM|ANALYZE|CLUSTER|REINDEX|REFRESH|" +
+  "LOCK|LISTEN|UNLISTEN|NOTIFY|LOAD|CHECKPOINT|DECLARE|CLOSE|PREPARE|" +
+  "EXECUTE|DEALLOCATE|IMPORT";
+/** A whole cell that is a command tag: a leader, optional further UPPER words
+ *  (`CREATE TABLE`, `REFRESH MATERIALIZED VIEW`), optional trailing counts. */
+const COMMAND_TAG_RE = new RegExp(`^(?:${COMMAND_TAG_LEADERS})(?: [A-Z]+)*(?: \\d+)*$`);
+
+function isCommandTag(cell: string | null): boolean {
+  return cell !== null && COMMAND_TAG_RE.test(cell);
+}
+
+/**
+ * True when a parsed grid is really psql command tags (a write with no
+ * RETURNING, or a batch of DDL/DML in "Allow writes" mode) rather than a query
+ * result. In `--csv` mode those tags arrive on the same stream as result data,
+ * so `parseCsv` turns them into a degenerate one-column grid whose header and
+ * every cell is a command tag — the shape this detects.
+ */
+function isCommandTagGrid(grid: Grid): boolean {
+  if (grid.columns.length !== 1 || !isCommandTag(grid.columns[0])) return false;
+  return grid.rows.every((r) => r.length === 1 && isCommandTag(r[0]));
+}
+
+/** A command-tag grid's tags in order (header first, then each row's cell). */
+function commandTags(grid: Grid): string[] {
+  return [grid.columns[0], ...grid.rows.map((r) => r[0] ?? "")].filter(Boolean);
+}
+
 // --- read-only statement classification -------------------------------------
 
 const READ_ONLY_LEADERS = new Set(["SELECT", "WITH", "SHOW", "EXPLAIN", "TABLE", "VALUES"]);
@@ -433,5 +473,19 @@ export async function runUserQuery(
       return { ok: false, readonlyRejected: true, leader: cls.leader, error: cls.reason };
     }
   }
-  return runSql(target, trimmed);
+
+  const res = await runSql(target, trimmed);
+  // A statement with no row set (writes/DDL) comes back as psql command tags in a
+  // degenerate one-column grid. Surface those as a status message with an empty
+  // grid so the client shows them in the status area, not as a table.
+  if (res.ok && res.grid && isCommandTagGrid(res.grid)) {
+    const status = commandTags(res.grid).join("\n");
+    return {
+      ...res,
+      grid: { columns: [], rows: [] },
+      rowCount: 0,
+      messages: [status, res.messages].filter(Boolean).join("\n\n") || undefined,
+    };
+  }
+  return res;
 }

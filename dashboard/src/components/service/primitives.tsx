@@ -26,6 +26,7 @@ import {
   Globe,
   ExternalLink,
   Network,
+  Sparkles,
 } from "lucide-react";
 import type { Action, AppDomain, ServiceStatus } from "@/lib/dokploy";
 import type { ActionResult } from "@/app/actions";
@@ -88,6 +89,34 @@ export function Btn({
       )}
     >
       {children}
+    </button>
+  );
+}
+
+/**
+ * Secondary "Generate URL" button: attaches a random routable host to a service
+ * with no typing. Kept beside the custom-host form in both the application and
+ * compose Domains sections. Real button + explicit focus ring + icon & text
+ * (never color-only), so it stays keyboard- and screen-reader-accessible.
+ */
+export function GenerateUrlBtn({
+  pending,
+  disabled,
+  onClick,
+}: {
+  pending: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={pending || disabled}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-fg)] transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] disabled:opacity-40"
+    >
+      {pending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+      Generate URL
     </button>
   );
 }

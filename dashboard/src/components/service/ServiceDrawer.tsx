@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useTransition } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useDialogFocus } from "@/components/use-focus-trap";
 import {
@@ -165,10 +165,190 @@ function withDataTab(base: TabId[]): TabId[] {
   return out;
 }
 
+/**
+ * Resizable-drawer width, persisted per browser.
+ *
+ * The drawer is docked to the right, so its width is driven by dragging the
+ * LEFT edge: drag the handle left → wider, right → narrower. The default
+ * (`DEFAULT_WIDTH`) matches the old fixed `max-w-xl` (36rem / 576px) so nothing
+ * shifts for users who never resize. Width is clamped to [MIN_WIDTH, 90vw] and
+ * the upper bound tracks the viewport, so the drawer stays usable on small
+ * windows (where 90vw can fall below MIN_WIDTH, the viewport cap wins).
+ */
+const DRAWER_WIDTH_KEY = "switchyard:drawer-width";
+const DEFAULT_WIDTH = 576; // 36rem, == the previous max-w-xl
+const MIN_WIDTH = 360;
+const WIDTH_STEP = 24; // keyboard arrow increment (px)
+const WIDTH_STEP_LARGE = 96; // PageUp/PageDown increment (px)
+
+/** Largest allowed width for the current viewport (90vw). */
+function maxDrawerWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_WIDTH;
+  return Math.round(window.innerWidth * 0.9);
+}
+
+/** Clamp to [min(MIN_WIDTH, 90vw), 90vw] — the viewport cap wins on tiny windows. */
+function clampWidth(w: number): number {
+  const max = maxDrawerWidth();
+  const min = Math.min(MIN_WIDTH, max);
+  return Math.round(Math.min(Math.max(w, min), max));
+}
+
+function loadWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_WIDTH;
+  try {
+    const raw = localStorage.getItem(DRAWER_WIDTH_KEY);
+    if (raw == null) return DEFAULT_WIDTH;
+    const n = Number(raw);
+    return Number.isFinite(n) ? clampWidth(n) : DEFAULT_WIDTH;
+  } catch {
+    return DEFAULT_WIDTH;
+  }
+}
+
+function saveWidth(w: number) {
+  try {
+    localStorage.setItem(DRAWER_WIDTH_KEY, String(w));
+  } catch {
+    /* ignore (private mode / disabled storage) */
+  }
+}
+
+/** State + persistence for the drawer width. */
+function useDrawerWidth() {
+  const [width, setWidth] = useState<number>(() => loadWidth());
+
+  const apply = useCallback((next: number) => {
+    const clamped = clampWidth(next);
+    setWidth(clamped);
+    saveWidth(clamped);
+    return clamped;
+  }, []);
+
+  const reset = useCallback(() => apply(DEFAULT_WIDTH), [apply]);
+
+  // Keep the drawer within 90vw when the window shrinks. Only the live value is
+  // re-clamped (not persisted), so restoring the window keeps the user's pick.
+  useEffect(() => {
+    const onResize = () => setWidth((w) => clampWidth(w));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  return { width, apply, reset };
+}
+
+/**
+ * Drag handle on the drawer's left edge. Pointer-drag resizes; it is also a
+ * focusable `separator` so keyboard users can resize with the arrow keys
+ * (Left/Up = wider, Right/Down = narrower, Home = min, End = max, PageUp/Down =
+ * big step). Double-click / Enter / Space resets to the default width. The
+ * live width is mirrored into aria-valuenow so assistive tech announces it.
+ */
+function ResizeHandle({
+  width,
+  apply,
+  reset,
+}: {
+  width: number;
+  apply: (n: number) => number;
+  reset: () => void;
+}) {
+  const dragging = useRef(false);
+  const start = useRef({ x: 0, w: 0 });
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Only the primary button drags; ignore right/middle clicks.
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragging.current = true;
+    start.current = { x: e.clientX, w: width };
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging.current) return;
+    // Drawer is right-docked: leftward drag (smaller clientX) → wider.
+    apply(start.current.w + (start.current.x - e.clientX));
+  };
+
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* pointer already released */
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    let handled = true;
+    switch (e.key) {
+      case "ArrowLeft":
+      case "ArrowUp":
+        apply(width + WIDTH_STEP);
+        break;
+      case "ArrowRight":
+      case "ArrowDown":
+        apply(width - WIDTH_STEP);
+        break;
+      case "PageUp":
+        apply(width + WIDTH_STEP_LARGE);
+        break;
+      case "PageDown":
+        apply(width - WIDTH_STEP_LARGE);
+        break;
+      case "Home":
+        apply(MIN_WIDTH);
+        break;
+      case "End":
+        apply(maxDrawerWidth());
+        break;
+      case "Enter":
+      case " ":
+        reset();
+        break;
+      default:
+        handled = false;
+    }
+    if (handled) e.preventDefault();
+  };
+
+  const max = maxDrawerWidth();
+  const min = Math.min(MIN_WIDTH, max);
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize panel (arrow keys resize, double-click resets)"
+      aria-valuenow={width}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={reset}
+      onKeyDown={onKeyDown}
+      className="group absolute inset-y-0 left-0 z-10 flex w-2 -translate-x-1/2 cursor-col-resize touch-none items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/60"
+    >
+      {/* Visible grip: subtle by default, brightens on hover/focus. */}
+      <span
+        aria-hidden
+        className="h-16 w-1 rounded-full bg-[var(--color-border-strong)] transition-colors group-hover:bg-[var(--color-brand)] group-focus-visible:bg-[var(--color-brand)]"
+      />
+    </div>
+  );
+}
+
 export function ServiceDrawer({ service, onClose }: { service: Service | null; onClose: () => void }) {
   const [tab, setTab] = useState<TabId>("overview");
   const titleId = useId();
   const dialogRef = useDialogFocus<HTMLElement>(onClose);
+  const { width, apply: applyWidth, reset: resetWidth } = useDrawerWidth();
   // Reset to Overview when a different service is opened (adjust state during
   // render — the React-recommended alternative to a resetting effect).
   const [shownId, setShownId] = useState<string | null>(null);
@@ -204,8 +384,13 @@ export function ServiceDrawer({ service, onClose }: { service: Service | null; o
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 320, damping: 34 }}
-            className="fixed inset-y-0 right-0 z-50 flex w-full max-w-xl flex-col border-l border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-2xl"
+            // Width is a layout property; the slide-in animates `x` (transform),
+            // so resizing and the framer-motion animation never fight. maxWidth
+            // is a CSS backstop for the same 90vw cap the JS clamp enforces.
+            style={{ width, maxWidth: "90vw" }}
+            className="fixed inset-y-0 right-0 z-50 flex flex-col border-l border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-2xl"
           >
+            <ResizeHandle width={width} apply={applyWidth} reset={resetWidth} />
             <Header service={service} onClose={onClose} titleId={titleId} />
             <nav
               role="tablist"

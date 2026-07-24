@@ -19,7 +19,6 @@ import {
   createDatabase,
   databaseAction,
   saveEnvironment,
-  createCompose,
   composeAction,
   request,
   ENGINES,

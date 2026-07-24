@@ -22,6 +22,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { SESSION_COOKIE, openSession } from "./session";
+import { randomServiceName } from "./names";
 import { rewriteDataBindsToVolumes } from "./template-volumes";
 import {
   deriveComposeRuntime,
@@ -1230,7 +1231,8 @@ export async function createComposeDomain(
   composeId: string,
   serviceName: string,
   host: string,
-  port = 80
+  port = 80,
+  opts?: { https?: boolean; certificateType?: CertificateType }
 ): Promise<void> {
   await request("domain.create", {
     method: "POST",
@@ -1239,8 +1241,8 @@ export async function createComposeDomain(
       serviceName,
       host,
       port,
-      https: true,
-      certificateType: "letsencrypt",
+      https: opts?.https ?? true,
+      certificateType: opts?.certificateType ?? "letsencrypt",
       domainType: "compose",
     },
   });
@@ -1388,6 +1390,46 @@ export async function ensureAutoDomain(applicationId: string): Promise<string | 
   const host = `${appName}.${hostIp}.sslip.io`;
   await createDomainRecord(applicationId, host, "letsencrypt");
   return host;
+}
+
+/** A host + cert profile the "Generate URL" button attaches to a service. */
+export interface GeneratedHost {
+  host: string;
+  https: boolean;
+  certificateType: "none" | "letsencrypt";
+}
+
+/** Lowercase, DNS-label-safe slug for the host prefix; never empty. */
+function domainSlug(name: string): string {
+  const s = (name ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return s || "app";
+}
+
+/**
+ * Compute (but do NOT persist) a host for the "Generate URL" button. The caller
+ * attaches it with the form's own port/service selection. Two modes, matching
+ * the auto-URL conventions above:
+ *
+ *  - Docker Desktop / dev (no SWITCHYARD_HOST_IP): `<slug>-<rand>.localhost`,
+ *    which the local Traefik ingress routes over plain HTTP — so https:false and
+ *    certificateType "none" (Let's Encrypt can't issue for `.localhost`).
+ *  - Linux / hostIp: reuse Dokploy's `domain.generateDomain` for a routable
+ *    `*.traefik.me` host (shared cert → "none"); if that's unavailable fall back
+ *    to `<slug>.<hostIp>.sslip.io` with a real Let's Encrypt cert.
+ */
+export async function generateHostFor(name: string): Promise<GeneratedHost> {
+  const slug = domainSlug(name);
+  const hostIp = process.env.SWITCHYARD_HOST_IP?.trim();
+  if (!hostIp) {
+    // randomServiceName(slug) → "<slug>-<4 chars>"; append the routable suffix.
+    return { host: `${randomServiceName(slug)}.localhost`, https: false, certificateType: "none" };
+  }
+  const generated = await generateTraefikMeHost(slug);
+  if (generated) return { host: generated, https: true, certificateType: "none" };
+  return { host: `${slug}.${hostIp}.sslip.io`, https: true, certificateType: "letsencrypt" };
 }
 
 // --- schedules --------------------------------------------------------------

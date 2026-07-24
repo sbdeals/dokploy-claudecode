@@ -7,6 +7,7 @@ import {
   composeLifecycleAction,
   saveComposeFileAction,
   createComposeDomainAction,
+  generateComposeDomainAction,
 } from "@/app/actions";
 import {
   inputCls,
@@ -16,6 +17,7 @@ import {
   SaveRow,
   DangerZone,
   PublicUrlBar,
+  GenerateUrlBtn,
   useLifecycle,
   useSavedFlash,
 } from "@/components/service/primitives";
@@ -114,10 +116,12 @@ export function ComposeDomainsTab({ compose }: { compose: ComposeService }) {
   const [port, setPort] = useState("80");
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<string | null>(null);
 
   function add() {
     if (!host.trim() || !serviceName.trim()) return;
     setError(null);
+    setGenerated(null);
     start(async () => {
       const res = await createComposeDomainAction(
         compose.id,
@@ -126,6 +130,23 @@ export function ComposeDomainsTab({ compose }: { compose: ComposeService }) {
         Number(port) || 80
       );
       if (res.ok) setHost("");
+      else setError(res.error);
+    });
+  }
+
+  // Attach a random routable host to the selected service, on the current port.
+  function generate() {
+    if (!serviceName.trim()) return;
+    setError(null);
+    setGenerated(null);
+    start(async () => {
+      const res = await generateComposeDomainAction(
+        compose.id,
+        serviceName,
+        serviceName,
+        Number(port) || 80
+      );
+      if (res.ok) setGenerated(res.host);
       else setError(res.error);
     });
   }
@@ -197,6 +218,7 @@ export function ComposeDomainsTab({ compose }: { compose: ComposeService }) {
             />
           </Field>
         </div>
+        <GenerateUrlBtn pending={pending} disabled={!serviceName.trim()} onClick={generate} />
         <button
           onClick={add}
           disabled={pending || !host.trim() || !serviceName.trim()}
@@ -206,6 +228,11 @@ export function ComposeDomainsTab({ compose }: { compose: ComposeService }) {
           Add
         </button>
       </div>
+      {generated && (
+        <p role="status" className="text-xs text-[var(--color-ok)]">
+          Attached {generated} → {serviceName} — it appears in the list above.
+        </p>
+      )}
       {error && <p role="alert" className="text-xs text-[var(--color-danger)]">{error}</p>}
     </div>
   );

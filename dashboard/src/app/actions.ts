@@ -35,6 +35,7 @@ import {
   createDomain,
   createComposeDomain,
   ensureAutoDomain,
+  generateHostFor,
   updateDomain,
   deleteDomain,
   createRedirect,
@@ -101,6 +102,8 @@ import { randomPassword, randomServiceName } from "@/lib/names";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 export type QuickDeployResult = { ok: true; id: string } | { ok: false; error: string };
+/** Result of the "Generate URL" action: the freshly-attached host on success. */
+export type GenerateUrlResult = { ok: true; host: string } | { ok: false; error: string };
 
 function fail(e: unknown): { ok: false; error: string } {
   return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -124,6 +127,18 @@ async function wrapId(fn: () => Promise<string>): Promise<QuickDeployResult> {
     const id = await fn();
     revalidatePath("/");
     return { ok: true, id };
+  } catch (e) {
+    unstable_rethrow(e); // let a /login redirect on an expired session through
+    return fail(e);
+  }
+}
+
+/** Like `wrap`, but returns the generated host so the UI can surface it. */
+async function wrapHost(fn: () => Promise<string>): Promise<GenerateUrlResult> {
+  try {
+    const host = await fn();
+    revalidatePath("/");
+    return { ok: true, host };
   } catch (e) {
     unstable_rethrow(e); // let a /login redirect on an expired session through
     return fail(e);
@@ -422,6 +437,30 @@ export async function deleteDomainAction(domainId: string): Promise<ActionResult
   return wrap(() => deleteDomain(domainId));
 }
 
+/**
+ * Generate + attach a random public URL to an application with zero typing.
+ * The host follows the install's auto-URL conventions (`.localhost` on Docker
+ * Desktop, `*.traefik.me`/sslip.io on Linux); it is attached on the form's
+ * currently-selected `port`. Returns the new host so the UI can highlight it.
+ */
+export async function generateDomainAction(
+  applicationId: string,
+  serviceName: string,
+  port: number
+): Promise<GenerateUrlResult> {
+  return wrapHost(async () => {
+    const g = await generateHostFor(serviceName);
+    await createDomain(applicationId, {
+      host: g.host,
+      port,
+      https: g.https,
+      certificateType: g.certificateType,
+      path: "/",
+    });
+    return g.host;
+  });
+}
+
 /** Attach a domain to a compose service. `serviceName` is the compose service to route to. */
 export async function createComposeDomainAction(
   composeId: string,
@@ -430,6 +469,27 @@ export async function createComposeDomainAction(
   port: number
 ): Promise<ActionResult> {
   return wrap(() => createComposeDomain(composeId, serviceName.trim(), host.trim(), port));
+}
+
+/**
+ * Compose analog of `generateDomainAction`: mint a random host and route it to
+ * one service in the stack. `serviceName` is the compose service to target;
+ * `labelName` (usually that same service name) seeds the host prefix.
+ */
+export async function generateComposeDomainAction(
+  composeId: string,
+  serviceName: string,
+  labelName: string,
+  port: number
+): Promise<GenerateUrlResult> {
+  return wrapHost(async () => {
+    const g = await generateHostFor(labelName || serviceName);
+    await createComposeDomain(composeId, serviceName.trim(), g.host, port, {
+      https: g.https,
+      certificateType: g.certificateType,
+    });
+    return g.host;
+  });
 }
 
 // Networking config (applies on next deploy) — verified Dokploy v0.29.x shapes.

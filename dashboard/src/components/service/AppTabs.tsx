@@ -38,6 +38,7 @@ import {
   saveAppBuildTypeAction,
   setAppDockerSourceAction,
   createDomainAction,
+  generateDomainAction,
   updateDomainAction,
   deleteDomainAction,
   updateGitDeployAction,
@@ -58,6 +59,7 @@ import {
   DangerZone,
   PublicUrlBar,
   PrivateNetwork,
+  GenerateUrlBtn,
   useLifecycle,
   useSavedFlash,
 } from "@/components/service/primitives";
@@ -294,13 +296,26 @@ export function DomainsTab({ app }: { app: Application }) {
   const [draft, setDraft] = useState<DomainInput>(NEW_DOMAIN);
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<string | null>(null);
 
   function add() {
     if (!draft.host.trim()) return;
     setError(null);
+    setGenerated(null);
     start(async () => {
       const res = await createDomainAction(app.id, draft);
       if (res.ok) setDraft(NEW_DOMAIN);
+      else setError(res.error);
+    });
+  }
+
+  // Attach a random routable host with no typing, on the form's current port.
+  function generate() {
+    setError(null);
+    setGenerated(null);
+    start(async () => {
+      const res = await generateDomainAction(app.id, app.appName, draft.port);
+      if (res.ok) setGenerated(res.host);
       else setError(res.error);
     });
   }
@@ -326,7 +341,8 @@ export function DomainsTab({ app }: { app: Application }) {
       <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
         <div className="text-xs font-medium text-[var(--color-fg-muted)]">Add a domain</div>
         <DomainFields value={draft} onChange={(patch) => setDraft((v) => ({ ...v, ...patch }))} />
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-between gap-2">
+          <GenerateUrlBtn pending={pending} onClick={generate} />
           <button
             onClick={add}
             disabled={pending || !draft.host.trim()}
@@ -336,7 +352,15 @@ export function DomainsTab({ app }: { app: Application }) {
             Add
           </button>
         </div>
+        <p className="text-[10px] text-[var(--color-fg-subtle)]">
+          Generate URL attaches a random host on port {draft.port} — no typing needed.
+        </p>
       </div>
+      {generated && (
+        <p role="status" className="text-xs text-[var(--color-ok)]">
+          Attached {generated} — it appears in the list above.
+        </p>
+      )}
       {error && <p role="alert" className="text-xs text-[var(--color-danger)]">{error}</p>}
     </div>
   );
