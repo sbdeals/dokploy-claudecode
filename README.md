@@ -42,6 +42,13 @@ everything.
    Prefer browsing the [release page](https://github.com/sbdeals/Switchyard/releases/latest)?
    Its notes open with a "which file do I download" table — everything else
    under Assets is auto-updater plumbing you can ignore.
+
+   On Windows you can skip the download **and** the SmartScreen warning in
+   one move by installing from a terminal instead:
+
+   ```powershell
+   winget install sbdeals.Switchyard
+   ```
 2. **Run it.** The build isn't code-signed yet, so both OSes will warn you the
    first time:
    - **Windows:** SmartScreen may warn; click **More info → Run anyway**.

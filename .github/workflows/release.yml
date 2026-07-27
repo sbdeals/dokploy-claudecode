@@ -423,7 +423,7 @@ jobs:
 
           The builds aren't code-signed yet (signing is planned):
 
-          - **Windows:** SmartScreen may warn → **More info** → **Run anyway**.
+          - **Windows:** SmartScreen may warn → **More info** → **Run anyway**. (Or skip the warning entirely by installing from a terminal instead: \`winget install sbdeals.Switchyard\`.)
           - **macOS 15 and later:** open the app once (it gets blocked), then **System Settings → Privacy & Security** → scroll down → **Open Anyway**.
           - **macOS 14 and earlier:** right-click the app → **Open** → **Open**.
           - **Intel Macs:** no installer yet — use \`npx switchyard-cli up\` in Terminal.
@@ -456,3 +456,31 @@ jobs:
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
             -f tag_name="$GITHUB_REF_NAME" -F draft=false -f make_latest=true >/dev/null
           echo "published release $GITHUB_REF_NAME (id $RELEASE_ID) as Latest"
+
+  # Bump the winget manifest so `winget install sbdeals.Switchyard` serves this
+  # release. winget-fetched installers carry no browser mark-of-the-web, so
+  # users see no SmartScreen "Windows protected your PC" dialog — signed or
+  # not. Opt-in like the signing legs: without the WINGET_TOKEN secret
+  # (classic PAT, public_repo scope) the job logs a skip and exits green.
+  # wingetcreate submits the version-bump PR to microsoft/winget-pkgs from the
+  # token owner's fork; the package must already exist there — the one-time
+  # bootstrap submission is documented in desktop/README.md. Runs after
+  # `publish` because winget-pkgs validation downloads the installer URL,
+  # which 404s while the release is still a draft.
+  winget:
+    needs: publish
+    runs-on: windows-latest
+    steps:
+      - name: Submit manifest update to winget-pkgs (skips without WINGET_TOKEN)
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host "WINGET_TOKEN not set - skipping winget submission"
+            exit 0
+          }
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/Switchyard-Setup-$version.exe"
+          Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          .\wingetcreate.exe update sbdeals.Switchyard --version $version --urls $url --submit --token $env:WINGET_TOKEN
