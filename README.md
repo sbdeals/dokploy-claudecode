@@ -203,6 +203,7 @@ Claude Code here), `make doctor` (check prerequisites).
 | [Architecture](docs/architecture.md) | The BFF design, data model, SSE logs/metrics, canvas internals |
 | [Launch tooling](docs/launch-tooling.md) | Every make target and script, and why they exist |
 | [Troubleshooting](docs/troubleshooting.md) | Symptom → cause → fix, for both platforms |
+| [Licensing notes](docs/licensing-notes.md) | How Switchyard relates to Dokploy's dual license, and what to re-check on Dokploy upgrades |
 
 ## Repo layout
 

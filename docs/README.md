@@ -10,6 +10,7 @@ Docs for **Switchyard** — an open-source, Railway-style PaaS built on [Dokploy
 | [Architecture](architecture.md) | Understand how Switchyard works: the BFF over the Dokploy API, Server Actions, SSE logs/metrics, canvas edge inference |
 | [Launch tooling](launch-tooling.md) | Use or modify the `make` targets and `scripts/` that install and manage the Dokploy stack on a Linux host |
 | [Troubleshooting](troubleshooting.md) | Fix a specific failure — port conflicts, Swarm mount rejections, crash loops, Windows quirks |
+| [Licensing notes](licensing-notes.md) | Understand how Switchyard relates to Dokploy's dual license (Apache 2.0 + DSAL), and what to re-check on Dokploy upgrades |
 
 ## Quick orientation
 
