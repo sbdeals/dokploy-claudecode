@@ -1,3 +1,5 @@
+import { unstable_rethrow } from "next/navigation";
+
 import { knownAppNames } from "@/lib/dokploy";
 import {
   fetchRows,
@@ -70,7 +72,10 @@ export async function POST(request: Request) {
   let allowed: Set<string>;
   try {
     allowed = await knownAppNames();
-  } catch {
+  } catch (e) {
+    // A rejected session throws NEXT_REDIRECT (-> /login); let it propagate
+    // instead of masking it as a 503, exactly like the logs/metrics routes.
+    unstable_rethrow(e);
     return bad("Workspace unavailable.", 503);
   }
   if (!allowed.has(app)) return bad("Unknown or unmanaged service.", 403);

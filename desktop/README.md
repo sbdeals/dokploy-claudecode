@@ -29,12 +29,16 @@ source of truth for HOW the stack is provisioned.
    (the stack keeps running — containers are `restart unless-stopped`).
 
 Auto-update: `electron-updater` against GitHub Releases (`latest.yml` is
-published by the release workflow). Windows works unsigned; macOS auto-update
-works on release builds, which are signed and notarized in CI (see
-[Releasing](#releasing) — unsigned mac builds, e.g. local `npm run dist`, are
-rejected by Squirrel.Mac and fall back to the tray's manual update check).
+published by the release workflow). Windows works unsigned. macOS auto-update
+only works on signed and notarized builds, which CI produces once the signing
+secrets are configured (see [Releasing](#releasing)); today's releases are
+unsigned, so Squirrel.Mac rejects the update and the app falls back to the
+tray's manual update check (the same as local `npm run dist` builds).
 
 ## Dev
+
+Needs Node 22.12 or newer (electron-builder pulls in `@electron/rebuild`, which
+requires it; CI uses Node 22). End users never need Node, Electron bundles it.
 
 ```bash
 cd desktop

@@ -18,9 +18,10 @@ browser ──> Switchyard (Next.js server) ──> Dokploy API (:3000)
 - **Auth**: users sign in at `/login` with their **own Dokploy account**. The
   BFF holds each user's Dokploy session cookie inside a sealed (AES-256-GCM)
   Switchyard session cookie; a proxy gate (`src/proxy.ts`) blocks every other
-  route until it's present. The admin credentials in `.env.local` serve one
-  purpose only: the `/api/health?deep=1` installer probe. Credentials never
-  reach the browser.
+  route until it's present; every API route then validates the cookie itself
+  and rejects it after 7 days. The admin credentials in `.env.local` serve two
+  purposes only: the `/api/health?deep=1` installer probe and the background
+  metrics/logs collector. Credentials never reach the browser.
 - **Data model**: Dokploy nests a database under `project → environment`.
   `project.all` returns the tree (trimmed to IDs), so each database is enriched
   via `<engine>.one`. See `src/lib/dokploy.ts`.
@@ -32,17 +33,19 @@ browser ──> Switchyard (Next.js server) ──> Dokploy API (:3000)
 Dokploy must be running first (`make up` from the repo root).
 
 ```bash
-cp .env.example .env.local   # then fill in DOKPLOY_EMAIL / DOKPLOY_PASSWORD
+cp .env.example .env.local   # set SWITCHYARD_SESSION_SECRET (+ DOKPLOY_EMAIL / DOKPLOY_PASSWORD for the probe and collector)
 npm install
 npm run dev                  # http://localhost:3001  (Dokploy owns :3000)
+npm test                     # vitest: session sealing/expiry + API auth-gate tests
 ```
 
 | Env var | Meaning |
 |---|---|
 | `DOKPLOY_URL` | Dokploy base URL (default `http://localhost:3000`) |
-| `DOKPLOY_EMAIL` | admin email — used only by the `/api/health?deep=1` probe |
-| `DOKPLOY_PASSWORD` | admin password — same single purpose |
+| `DOKPLOY_EMAIL` | admin email, used only by the `/api/health?deep=1` probe and the background metrics collector |
+| `DOKPLOY_PASSWORD` | admin password, same two uses |
 | `SWITCHYARD_SESSION_SECRET` | signs/encrypts the session cookie (required) |
+| `SWITCHYARD_ASSUME_HTTPS` | force the session cookie's `Secure` attribute when your TLS proxy does not send `X-Forwarded-Proto: https` (off by default; never set it over plain HTTP, the browser would drop the cookie) |
 
 See `.env.example` for the optional auto-URL (`SWITCHYARD_HOST_IP`) and
 observability persistence/alerting (`SWITCHYARD_STORE_URL`, `SWITCHYARD_ALERT_*`)

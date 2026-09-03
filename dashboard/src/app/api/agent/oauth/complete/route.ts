@@ -1,25 +1,20 @@
 import { completeLogin } from "@/lib/agent/oauth";
 import { setOAuthCredential } from "@/lib/agent/key-store";
+import { sessionFromRequest, unauthorized } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function assertSession(req: Request): Response | null {
-  const cookie = req.headers.get("cookie") ?? "";
-  if (!/(?:^|;\s*)switchyard_session=/.test(cookie)) {
-    return Response.json({ error: "Not signed in." }, { status: 401 });
-  }
-  return null;
-}
 
 /**
  * POST { code } -> exchange the one-time code the user pasted back for
  * subscription tokens and store them. On success { ok: true }; the UI then
  * re-reads /api/agent/config for the new (masked) status.
+ *
+ * The proxy only proves a session cookie EXISTS; the sealed cookie is verified
+ * here because the stored tokens become the process-wide agent credential.
  */
 export async function POST(req: Request) {
-  const denied = assertSession(req);
-  if (denied) return denied;
+  if (!sessionFromRequest(req)) return unauthorized();
 
   let body: { code?: unknown };
   try {

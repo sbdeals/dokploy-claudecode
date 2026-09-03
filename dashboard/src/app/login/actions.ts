@@ -1,10 +1,16 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { signInToDokploy, signUpToDokploy } from "@/lib/dokploy";
-import { SESSION_COOKIE, SESSION_MAX_AGE, sealSession } from "@/lib/session";
+import { signInToDokploy, signOutOfDokploy, signUpToDokploy } from "@/lib/dokploy";
+import {
+  SESSION_COOKIE,
+  SESSION_MAX_AGE,
+  openSession,
+  sealSession,
+  shouldSecureCookie,
+} from "@/lib/session";
 
 export interface LoginState {
   error?: string;
@@ -42,10 +48,24 @@ async function establishSession(email: string, password: string): Promise<LoginS
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE,
+    // The dashboard itself speaks plain HTTP (127.0.0.1 by default, no TLS), so
+    // the cookie can't be Secure unconditionally — the default localhost login
+    // would never be sent. Behind an HTTPS proxy that sets x-forwarded-proto
+    // (or with SWITCHYARD_ASSUME_HTTPS on, for proxies that don't) we do mark it
+    // Secure, so a browser never replays the session over plain HTTP.
+    secure: await cookieSecure(),
   });
 
   // Outside the try/catch: redirect() throws NEXT_REDIRECT by design.
   redirect("/");
+}
+
+/** See lib/session.ts#shouldSecureCookie: the request's X-Forwarded-Proto, or the env opt-in. */
+async function cookieSecure(): Promise<boolean> {
+  return shouldSecureCookie(
+    (await headers()).get("x-forwarded-proto"),
+    process.env.SWITCHYARD_ASSUME_HTTPS,
+  );
 }
 
 /** Sign in with the user's OWN Dokploy account. */
@@ -87,9 +107,26 @@ export async function signupAction(_prev: LoginState, formData: FormData): Promi
   return establishSession(email, password);
 }
 
-/** Clear the session and return to the login screen. */
+/**
+ * Sign out. Deleting the browser cookie alone would leave the Dokploy session
+ * sealed inside it valid, so a copy held elsewhere (another browser, a leak)
+ * would keep working. We therefore also ask Dokploy to invalidate that session:
+ * afterwards every sealed copy gets a 401 from Dokploy and `request()` bounces
+ * it to /login. Best-effort — if Dokploy is unreachable the local sign-out
+ * still completes.
+ */
 export async function logoutAction(): Promise<void> {
   const store = await cookies();
+  const session = openSession(store.get(SESSION_COOKIE)?.value);
+  if (session) {
+    try {
+      await signOutOfDokploy(session.dokployCookie);
+    } catch (e) {
+      console.warn(
+        `[logout] Dokploy sign-out failed; the local session was cleared anyway: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+  }
   store.delete(SESSION_COOKIE);
   redirect("/login");
 }

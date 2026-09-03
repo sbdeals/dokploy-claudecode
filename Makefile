@@ -1,4 +1,4 @@
-# Dokploy + Claude Code — launch commands
+# Switchyard (Dokploy + Claude Code) launch commands
 #
 #   make up       Launch Dokploy (Docker daemon, Swarm, services, Traefik)
 #   make status   Show the status of the Dokploy stack + dashboard URL

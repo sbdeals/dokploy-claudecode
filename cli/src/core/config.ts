@@ -18,8 +18,16 @@ export interface SwitchyardConfig {
   dokployPort: number;
   /** Host port the Switchyard container is published on. */
   dashboardPort: number;
-  /** false = bind 127.0.0.1 (default; the dashboard has no auth). */
+  /** false = bind 127.0.0.1 (default; the dashboard has a login but no TLS). */
   expose: boolean;
+  /**
+   * Mark the dashboard's session cookie Secure even when the request carries no
+   * `X-Forwarded-Proto: https` (an HTTPS proxy in front that omits the header).
+   * Handed to the dashboard as SWITCHYARD_ASSUME_HTTPS=1. Only for TLS-fronted
+   * setups: over plain HTTP the browser drops a Secure cookie and nobody can
+   * sign in.
+   */
+  assumeHttps: boolean;
   /** Skip the Traefik proxy (defaults true on Docker Desktop, false on Linux). */
   skipTraefik: boolean;
   /**
@@ -83,6 +91,7 @@ export function defaultConfig(platform: Platform = detectPlatform()): Switchyard
     dokployPort: 3000,
     dashboardPort: 3001,
     expose: false,
+    assumeHttps: false,
     skipTraefik: platform !== "linux",
     localIngress: false,
     localIngressHttpPort: 8080,
@@ -105,6 +114,7 @@ export const CONFIG_KEY_TYPES = {
   dokployPort: "number",
   dashboardPort: "number",
   expose: "boolean",
+  assumeHttps: "boolean",
   skipTraefik: "boolean",
   localIngress: "boolean",
   localIngressHttpPort: "number",

@@ -84,3 +84,13 @@ test("disabling the store blanks the URL", () => {
   const cfg = { ...defaultConfig("linux"), store: false, storePassword: "s3cret" };
   assert.equal(metricsStoreUrl(cfg), "");
 });
+
+test("assumeHttps adds SWITCHYARD_ASSUME_HTTPS=1 and changes the hash; off is a no-op", () => {
+  const cfg = defaultConfig("linux");
+  const base = renderContainer(cfg, "1.0.0");
+  // Off (the default) must not add the env or perturb the hash of existing installs.
+  assert.ok(!base.runArgs.some((a) => a.startsWith("SWITCHYARD_ASSUME_HTTPS=")));
+  const on = renderContainer({ ...cfg, assumeHttps: true }, "1.0.0");
+  assert.ok(on.runArgs.includes("SWITCHYARD_ASSUME_HTTPS=1"));
+  assert.notEqual(base.hash, on.hash);
+});

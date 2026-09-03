@@ -227,13 +227,14 @@ then Apply & restart.
 **Symptom.** Instead of the workspace, http://localhost:3001 renders a red
 card titled **"Couldn't reach Dokploy"** with an error message underneath.
 
-**Cause.** Switchyard's server side could not reach — or could not sign into —
-the Dokploy API using its `DOKPLOY_URL` / `DOKPLOY_EMAIL` / `DOKPLOY_PASSWORD`
-values (from `dashboard/.env.local` in dev mode, or the container env set by
-the CLI). The card (rendered by `dashboard/src/app/page.tsx`) prints the
-underlying error verbatim: read it first, since it distinguishes a connection
-failure (wrong URL/port, Dokploy down) from an authentication failure (wrong
-credentials).
+**Cause.** Switchyard's server side could not reach the Dokploy API at
+`DOKPLOY_URL` (from `dashboard/.env.local` in dev mode, or the container env
+set by the CLI) with the signed-in user's session. A rejected or expired
+session never shows this card: it redirects to `/login` instead. The card
+(rendered by `dashboard/src/app/page.tsx`) prints the underlying error
+verbatim: read it first, since it names the URL it tried and whether Dokploy
+answered at all. `DOKPLOY_EMAIL` / `DOKPLOY_PASSWORD` do not affect this page;
+they only power the deep health probe and the background metrics collector.
 
 **Fix.** For the CLI-managed container, see
 [Dashboard container can't talk to Dokploy](#dashboard-container-cant-talk-to-dokploy-deep-health-check-fails).
@@ -244,9 +245,9 @@ For dev mode, this checklist:
 2. **Is `DOKPLOY_URL` right?** Default `http://localhost:3000`; if you
    published Dokploy on another port (e.g. 3300 on the Windows path), it must
    say so — host *and* port.
-3. **Do the credentials match an existing admin?** `DOKPLOY_EMAIL` /
-   `DOKPLOY_PASSWORD` must be the account created at `/register`. Confirm by
-   signing into the Dokploy UI manually with the same values.
+3. **Is your session still good?** Sign out and back in at `/login` with your
+   Dokploy account. If Dokploy itself rejects that sign-in, fix the account in
+   the Dokploy UI first.
 4. **Restart the dev server** after any `.env.local` change.
 
 ## Logs and Metrics tabs are empty on Windows

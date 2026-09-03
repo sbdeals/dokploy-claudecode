@@ -138,6 +138,7 @@ dashboard container gets its credentials without hand-edited env files).
 | `imageTag` | `""` (= CLI version) | Pin a dashboard image tag |
 | `dokployUrlInContainer` | `http://dokploy:3000` | How the container reaches Dokploy (service DNS) |
 | `hostIp` | `""` (auto-detected on Linux) | Host public/advertise IP handed to the dashboard as `SWITCHYARD_HOST_IP` so app deploys mint an auto-URL (traefik.me / sslip.io) with no DNS. `""` disables auto-URL (Docker Desktop / dev). Override with `config set hostIp <ip>` |
+| `assumeHttps` | `false` | Mark the dashboard's session cookie `Secure` even without `X-Forwarded-Proto: https` (for TLS proxies that omit the header). Sets `SWITCHYARD_ASSUME_HTTPS=1` on the container. Only behind TLS: over plain HTTP the browser drops the cookie and nobody can sign in |
 
 Change a setting and apply it in one step — `set` recreates the container
 when the value affects it:
@@ -211,6 +212,17 @@ itself speaks plain HTTP. Because of that:
   shout at you first. On an internet-reachable machine, put an HTTPS reverse
   proxy in front — credentials and session cookies should not cross networks
   in the clear.
+- Concretely: over plain HTTP the session cookie crosses the network in the
+  clear and anyone who captures it can replay it until it expires (sessions
+  are rejected server-side after 7 days). The cookie is marked `Secure` only
+  when an HTTPS reverse proxy in front sends `X-Forwarded-Proto: https`; with
+  nothing in front, browsers send it over HTTP.
+- If your TLS proxy does not send `X-Forwarded-Proto`, run
+  `switchyard config set assumeHttps true` (it sets `SWITCHYARD_ASSUME_HTTPS=1`
+  on the container) so the cookie is marked `Secure` anyway. Never turn it on
+  over plain HTTP: browsers drop a Secure cookie and nobody can sign in.
+- Signing out invalidates the Dokploy session behind the cookie, so a copy of
+  the cookie captured earlier stops working the moment you log out.
 
 ## Migrating an existing install
 

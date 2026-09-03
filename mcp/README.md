@@ -6,8 +6,14 @@ drive the Switchyard PaaS directly — deploy an app, add a domain, read its
 logs — without opening the dashboard.
 
 This delivers the "driven by Claude Code" promise as a real capability, not just
-a launcher: the same control-plane operations the [dashboard](../dashboard/)
-performs are available to the agent.
+a launcher. It is a focused subset of the [dashboard](../dashboard/), not
+parity: exactly the 11 tools in the table below (deploy, lifecycle, logs, one
+metrics sample, env, a single domain attach, database creation). The dashboard
+does a lot the server does not expose: backups and S3 destinations, cron
+schedules, volume mounts, private-repo deploys via the GitHub App, the template
+catalog, deployment history and rollbacks, build configuration, redirects /
+ports / basic-auth, domain edits beyond one attach, notification channels, and
+the in-dashboard agent.
 
 ## How it fits
 

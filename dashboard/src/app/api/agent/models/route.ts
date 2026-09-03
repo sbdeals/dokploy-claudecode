@@ -10,19 +10,12 @@
  */
 import { getOpenAI } from "@/lib/agent/client";
 import { AGENT_MODELS, resolveAgentKey, resolveProvider } from "@/lib/agent/key-store";
+import { sessionFromRequest, unauthorized } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MODELS_TIMEOUT_MS = Number(process.env.AGENT_MODELS_TIMEOUT_MS) || 10_000;
-
-function assertSession(req: Request): Response | null {
-  const cookie = req.headers.get("cookie") ?? "";
-  if (!/(?:^|;\s*)switchyard_session=/.test(cookie)) {
-    return Response.json({ error: "Not signed in." }, { status: 401 });
-  }
-  return null;
-}
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -41,8 +34,9 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 export async function GET(req: Request) {
-  const denied = assertSession(req);
-  if (denied) return denied;
+  // The proxy only proves a session cookie EXISTS; verify it (the stored key
+  // is sent to whatever endpoint this lists models from).
+  if (!sessionFromRequest(req)) return unauthorized();
 
   if (resolveProvider() === "anthropic") {
     return Response.json({

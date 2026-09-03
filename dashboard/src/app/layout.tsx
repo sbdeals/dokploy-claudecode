@@ -6,7 +6,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Switchyard — Databases",
+  // Pages that set their own title render as "<page> · Switchyard".
+  title: { default: "Switchyard", template: "%s · Switchyard" },
   description: "A Railway-style control plane for Dokploy.",
 };
 

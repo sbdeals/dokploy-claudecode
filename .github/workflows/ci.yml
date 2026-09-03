@@ -19,6 +19,9 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci
+      # Unit tests for the auth gates (session sealing/expiry, per-session
+      # allow-list cache, fail-closed API routes).
+      - run: npm test
       # `next build` runs the TypeScript check itself.
       - run: npm run build
 

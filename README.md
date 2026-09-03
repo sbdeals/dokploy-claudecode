@@ -255,17 +255,20 @@ can't route service VIPs). Details and symptoms live in
 - [x] Railway-parity drawer: **Networking** (redirects/ports/basic-auth),
       **Deploy** (replicas/restart/healthcheck), **Console** (in-container
       commands), full **compose parity** (variables/domains/deploys/metrics)
-- [ ] HTTP metrics (traffic / requests / error rate / latency percentiles)
+- [x] HTTP metrics (traffic / requests / error rate / latency percentiles)
       from Traefik
-- [ ] In-dashboard Claude agent with staged-approval for destructive actions
+- [x] In-dashboard Claude agent with staged-approval for destructive actions
 - [ ] Per-deployment build logs in the dashboard
 - [ ] TLS for the dashboard itself (today: localhost default / HTTPS proxy for
       exposure); real Let's Encrypt custom domains need a Linux host on 80/443
 
 ## License
 
-[MIT](LICENSE) — free for any use; SignPath Foundation signs the Windows
-builds under their free open-source program.
+[MIT](LICENSE), free for any use. Release builds are currently unsigned on
+both Windows and macOS. The release workflow is wired for SignPath
+Foundation's free open-source code signing (or Azure Trusted Signing / a PFX
+certificate) on Windows and for Developer ID + notarization on macOS, and
+activates as soon as those secrets exist in the repository.
 
 ## Disclosure
 

@@ -36,7 +36,7 @@ The BFF exists so that credentials never reach the browser. [`src/lib/dokploy.ts
 
 - **Per-user session sign-in.** The user's `/login` POST goes to Dokploy's `/api/auth/sign-in/email`; the returned Dokploy cookie is trimmed to its `name=value` pairs and sealed inside the encrypted Switchyard session cookie (see the security model below). The raw Dokploy cookie and the user's credentials never reach the browser.
 - **Request wrapper.** Every call goes through `request()`, which reads the current user's Dokploy cookie from the request context (`next/headers`) and sends JSON with `cache: "no-store"`, so Next never caches Dokploy responses. On a `401` the user's Dokploy session has expired and they are redirected to `/login` — there is deliberately no silent fallback to an admin session.
-- **System probe.** The env admin credentials (`DOKPLOY_EMAIL` / `DOKPLOY_PASSWORD`) power only `ping()` behind `/api/health?deep=1`, so the installer can verify the container → Dokploy path before anyone has logged in.
+- **System session.** The env admin credentials (`DOKPLOY_EMAIL` / `DOKPLOY_PASSWORD`) power exactly two things: `ping()` behind `/api/health?deep=1`, so the installer can verify the container → Dokploy path before anyone has logged in, and the background metrics/logs collector, which runs on a timer and must not borrow the session of whichever user happened to trigger the first render. They never serve a user request. When they are unset the probe fails and the collector logs once and stays off.
 - **Upgrade path.** Dokploy also supports an `x-api-key` token, gated behind the member `canAccessToAPI` permission. Switching to it means changing only `request()`; no caller is touched.
 
 ## Data model and service listing
@@ -60,7 +60,7 @@ Databases come in five engines — `postgres`, `mysql`, `mariadb`, `mongo`, `red
 
 This is a deliberate N+1 fan-out — one detail request per service — which is fine at dashboard scale and keeps the client dumb: [`src/app/page.tsx`](../dashboard/src/app/page.tsx) just calls `loadWorkspace()` and hands `services`, `projects`, and inferred `edges` to the client-side `Workspace` component.
 
-`page.tsx` exports `dynamic = "force-dynamic"`, so the page is rendered per request from live Dokploy state (verified against the bundled Next 16 docs: `force-dynamic` forces request-time rendering). If `loadWorkspace()` throws — Dokploy down, bad credentials — the page renders an inline error panel showing the message and pointing at `DOKPLOY_URL` / `DOKPLOY_EMAIL` / `DOKPLOY_PASSWORD` in `.env.local` instead of crashing.
+`page.tsx` exports `dynamic = "force-dynamic"`, so the page is rendered per request from live Dokploy state (verified against the bundled Next 16 docs: `force-dynamic` forces request-time rendering). If `loadWorkspace()` throws because Dokploy is unreachable, the page renders an inline error panel showing the message and pointing at `DOKPLOY_URL` (and at signing in again at `/login`) instead of crashing. A rejected or expired session never reaches the panel: it redirects to `/login`.
 
 ## Server Actions and cache revalidation
 
@@ -132,6 +132,12 @@ mode), persistence is simply off and live behaviour is unchanged.
   lazy singleton started on first workspace render (`ensureCollector()` in
   `page.tsx`). Every interval it samples stats and tails logs for *all* known
   services — tab open or not — writes rollups, and feeds a crash-loop detector.
+  It lists services under the system session (`DOKPLOY_EMAIL` /
+  `DOKPLOY_PASSWORD`), never under whichever user triggered the first render.
+  (Timers inherit that request's async context, so before this the collector
+  kept using the first user's cookie for every tick and failed silently once
+  that Dokploy session expired.)
+  Without those credentials it logs once and stays off.
 - **History API** ([`/api/services/metrics/history`](../dashboard/src/app/api/services/metrics/history/route.ts)):
   queries rollups over a time range; `MetricsTab` seeds from it (so history
   survives a closed drawer) and offers a range selector, falling back to
@@ -183,7 +189,9 @@ Metrics and Logs tabs are keyed by `appName` and mount their `EventSource` only 
 
 Every route, Server Action, and SSE stream is gated by [`src/proxy.ts`](../dashboard/src/proxy.ts) (Next 16's successor to the `middleware` file convention). The allowlist is `/login`, `/api/health` (the installer's probe), and static assets; everything else requires a valid Switchyard session — pages get a 302 to `/login`, API routes and Server Actions get a 401.
 
-Sessions work like this: the user signs in at `/login` with their **own Dokploy account**; the BFF forwards the credentials to Dokploy's `/api/auth/sign-in/email` and seals the returned Dokploy session cookie inside an AES-256-GCM-encrypted, HttpOnly, SameSite=Lax Switchyard cookie (key: `SWITCHYARD_SESSION_SECRET`, seeded by the CLI). Each request THAT user makes rides their own Dokploy session (`request()` → `userCookie()`); on a Dokploy 401 the user is bounced to `/login`. The env admin credentials serve exactly one purpose — the `/api/health?deep=1` installer probe — and never serve user requests. The logs/metrics routes additionally validate `?app=` against the set of Dokploy-managed `appName`s before touching the Docker socket, so a signed-in user cannot tail arbitrary host containers.
+Sessions work like this: the user signs in at `/login` with their **own Dokploy account**; the BFF forwards the credentials to Dokploy's `/api/auth/sign-in/email` and seals the returned Dokploy session cookie inside an AES-256-GCM-encrypted, HttpOnly, SameSite=Lax Switchyard cookie (key: `SWITCHYARD_SESSION_SECRET`, seeded by the CLI). Each request THAT user makes rides their own Dokploy session (`request()` → `userCookie()`); on a Dokploy 401 the user is bounced to `/login`. The sealed cookie carries an issued-at timestamp and is rejected server-side once it is older than 7 days (`SESSION_MAX_AGE`), so a leaked cookie has a bounded life. It is marked `Secure` only when the request arrived over HTTPS, meaning an HTTPS reverse proxy in front that sends `X-Forwarded-Proto: https`; the default deployment is plain HTTP on 127.0.0.1, where a `Secure` cookie would never be sent at all. A TLS proxy that does not send that header can force it with `SWITCHYARD_ASSUME_HTTPS=1` (`switchyard config set assumeHttps true` on the managed container). Signing out also asks Dokploy to invalidate the sealed Dokploy session (`signOutOfDokploy`), so every copy of that cookie stops working, not only the one in the browser that clicked Log out. The env admin credentials serve exactly two purposes, the `/api/health?deep=1` installer probe and the background collector, and never serve user requests.
+
+The proxy only checks that the cookie is present; every API route validates it itself, so a forged or expired cookie gets a 401 from `/api/agent/*` and from the metrics routes alike. The logs, metrics, metrics-history, HTTP-metrics, exec, and Postgres routes additionally validate `?app=` against the set of Dokploy-managed `appName`s (cached briefly per session, never shared between users) before touching the Docker socket or the metrics store, and fail closed when that list cannot be built, so a signed-in user cannot tail arbitrary host containers.
 
 > **Warning — a login gate is not TLS.** The dashboard speaks plain HTTP, and any signed-in Dokploy user holds full admin (the drawer shows database passwords). Keep it bound to localhost (the default), or put an HTTPS reverse proxy in front before exposing it to any network you don't fully trust. See [Troubleshooting](troubleshooting.md) for network/exposure issues.
 
@@ -204,8 +212,8 @@ const nextConfig: NextConfig = {
 | Env var | Default | Meaning |
 |---|---|---|
 | `DOKPLOY_URL` | `http://localhost:3000` | Dokploy base URL |
-| `DOKPLOY_EMAIL` | — | Dokploy admin email (BFF sign-in) |
-| `DOKPLOY_PASSWORD` | — | Dokploy admin password |
+| `DOKPLOY_EMAIL` | — | Dokploy admin email. Used only by the `/api/health?deep=1` probe and the background metrics collector; never used to serve user requests |
+| `DOKPLOY_PASSWORD` | — | Dokploy admin password, same two uses |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker Engine socket; `//./pipe/docker_engine` on Windows |
 | `SWITCHYARD_HOST_IP` | — | Host public/advertise IP. When set, app deploys mint an auto-URL (traefik.me / sslip.io) with no DNS. Unset = auto-URL disabled (dev / Docker Desktop). The CLI sets it on Linux. |
 | `SWITCHYARD_STORE_URL` | — | Postgres URL for durable metrics/logs. Unset = persistence off (dev). Set by the CLI to the `switchyard-metrics` service. |
@@ -213,5 +221,6 @@ const nextConfig: NextConfig = {
 | `SWITCHYARD_ALERT_NOTIFICATION` | first | Which Dokploy notification channel to alert through (name or id). |
 | `SWITCHYARD_ALERT_RESTART_THRESHOLD` | `3` | Consecutive unhealthy samples before a crash-loop alert fires. |
 | `SWITCHYARD_COLLECT_INTERVAL_MS` | `20000` | Server-side collector sampling interval. |
+| `SWITCHYARD_ASSUME_HTTPS` | off | Force the session cookie's `Secure` attribute for TLS proxies that omit `X-Forwarded-Proto`. Never set it over plain HTTP: the browser drops a Secure cookie and nobody can sign in. |
 
 Set them in `dashboard/.env.local` (template: `dashboard/.env.example`). The dev and prod servers both bind port **3001** (`next dev -p 3001` / `next start -p 3001`), since Dokploy owns `:3000`.

@@ -13,7 +13,13 @@
  * Docker hiccup just skips a cycle.
  */
 import "server-only";
-import { loadWorkspace, notifyThroughDokploy, type Service } from "./dokploy";
+import {
+  hasSystemCredentials,
+  loadWorkspace,
+  notifyThroughDokploy,
+  withSystemSession,
+  type Service,
+} from "./dokploy";
 import { sampleStatsOnce, containerHealth, readRecentLogs } from "./docker";
 import { storeEnabled, writeMetric, writeLogs, pruneOld } from "./store";
 import {
@@ -47,6 +53,8 @@ interface CollectorRuntime {
   crash: Map<string, CrashLoopState>;
   lastLogTs: Map<string, number>;
   ticks: number;
+  /** Last system-session failure message, so an outage is logged once, not per tick. */
+  lastSystemError: string | null;
 }
 
 // Survive HMR / multiple imports: one runtime per process.
@@ -59,6 +67,7 @@ const rt: CollectorRuntime =
     crash: new Map(),
     lastLogTs: new Map(),
     ticks: 0,
+    lastSystemError: null,
   });
 
 /** Whether the container of an expected-up service looks crash-looping. */
@@ -111,8 +120,15 @@ async function collectOne(service: Service, now: number): Promise<void> {
   }
 }
 
-async function tick(): Promise<void> {
-  rt.ticks += 1;
+/**
+ * One sampling cycle. Runs from a timer. Without an explicit session it would
+ * inherit the async context of whichever request first started the timer and
+ * keep borrowing THAT user's cookie for every later tick (until their Dokploy
+ * session expired, after which every tick 401'd silently): the caller wraps
+ * this in `withSystemSession`, so every Dokploy call below uses the env admin
+ * session instead of a user's.
+ */
+async function collect(): Promise<void> {
   let services: Service[];
   try {
     ({ services } = await loadWorkspace());
@@ -139,10 +155,37 @@ async function tick(): Promise<void> {
   }
 }
 
-/** Start the collector once. No-op when neither persistence nor alerts are on. */
+async function tick(): Promise<void> {
+  rt.ticks += 1;
+  try {
+    await withSystemSession(collect);
+    rt.lastSystemError = null;
+  } catch (e) {
+    // Admin sign-in failed (wrong DOKPLOY_EMAIL/PASSWORD, Dokploy down, or the
+    // session was rejected mid-cycle): skip this cycle. Log once per distinct
+    // failure so a long outage doesn't fill the log every interval.
+    const message = e instanceof Error ? e.message : String(e);
+    if (message !== rt.lastSystemError) {
+      rt.lastSystemError = message;
+      console.warn(`[collector] system session unavailable, skipping cycle: ${message}`);
+    }
+  }
+}
+
+/**
+ * Start the collector once. No-op when neither persistence nor alerts are on,
+ * or when there are no admin credentials to run the background session with.
+ */
 export function ensureCollector(): void {
   if (rt.started) return;
   if (!storeEnabled() && !alertsEnabled) return;
+  if (!hasSystemCredentials()) {
+    rt.started = true; // env is fixed for the process; warn once, not per render
+    console.warn(
+      "[collector] disabled: DOKPLOY_EMAIL / DOKPLOY_PASSWORD are not set, so there is no system session for background sampling.",
+    );
+    return;
+  }
   rt.started = true;
   const loop = () => {
     void tick();

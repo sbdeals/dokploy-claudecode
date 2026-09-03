@@ -251,7 +251,7 @@ By status: **Idle** shows Deploy; **Running** shows Stop and Redeploy; **Deployi
 
 ## Tips and limits
 
-- **No dashboard auth.** Worth repeating: whoever reaches the Switchyard port is a Dokploy admin. Keep it local or gate it ([details](getting-started.md#set-up-switchyard-both-platforms)).
+- **Login required, but no TLS.** Worth repeating: anyone who signs in at `/login` is a full Dokploy admin, and the dashboard speaks plain HTTP. Keep it local (the default) or put an HTTPS proxy in front ([details](getting-started.md#set-up-switchyard-both-platforms)).
 - **Canvas layout is per-browser.** Node positions live in your browser's localStorage — another browser or machine sees the default column layout, and clearing site data resets yours.
 - **Edges are a heuristic.** Substring matching over env vars catches the common cases and occasionally invents an arrow; treat the canvas lines as hints, not truth.
 - **Statuses don't auto-refresh.** Click **Refresh** to see a background deployment finish; only Logs and Metrics stream live.

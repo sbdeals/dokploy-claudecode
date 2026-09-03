@@ -53,8 +53,8 @@ The CLI then does everything this guide's manual paths describe:
    the account against Dokploy's API — no browser `/register` round-trip, no
    credentials to copy anywhere.
 4. Runs Switchyard as a managed Docker container (restart policy, health
-   checked end to end), bound to **127.0.0.1:3001** — the dashboard has no
-   auth, so it is not exposed by default.
+   checked end to end), bound to **127.0.0.1:3001**: the dashboard requires a
+   Dokploy login but speaks plain HTTP, so it is not exposed by default.
 5. Offers to install Claude Code, and prints where everything lives.
 
 Re-running `up` is idempotent and doubles as the upgrade path
@@ -122,8 +122,8 @@ plus PowerShell.
 ### Bring the stack up
 
 ```bash
-git clone <repo-url> dokploy-claudecode
-cd dokploy-claudecode
+git clone https://github.com/sbdeals/Switchyard.git switchyard
+cd switchyard
 make up
 ```
 
@@ -171,7 +171,7 @@ remotely.
 Open **http://localhost:3000** (or `http://<server-ip>:3000`). A fresh Dokploy
 redirects to **`/register`** — create the admin account there. On an
 internet-reachable server do this immediately after `make up`. Keep the email
-and password: Switchyard signs in with them.
+and password: you sign into Switchyard with them at `/login`.
 
 ### Stop the stack
 
@@ -221,8 +221,8 @@ path, but it has not yet been verified end-to-end there.
 Clone the repo first (Switchyard runs from it later):
 
 ```powershell
-git clone <repo-url> dokploy-claudecode
-Set-Location dokploy-claudecode
+git clone https://github.com/sbdeals/Switchyard.git switchyard
+Set-Location switchyard
 ```
 
 ### 1. Initialize Swarm and the network
@@ -345,13 +345,13 @@ $body = @{ name = "Admin"; email = "admin@example.com"; password = "change-me" }
 Invoke-RestMethod -Method Post -Uri "http://localhost:3300/api/auth/sign-up/email" -ContentType "application/json" -Body $body
 ```
 
-Either way, keep the email and password — Switchyard signs in with them.
+Either way, keep the email and password: you sign into Switchyard with them at `/login`.
 
 ## Set up Switchyard (both platforms)
 
-Switchyard is a Next.js app in [`dashboard/`](../dashboard/) that signs into
-the Dokploy API server-side. See [dashboard-guide.md](dashboard-guide.md) for
-what it can do once running.
+Switchyard is a Next.js app in [`dashboard/`](../dashboard/) that talks to the
+Dokploy API server-side with each signed-in user's own Dokploy session. See
+[dashboard-guide.md](dashboard-guide.md) for what it can do once running.
 
 > This section is the **dev-mode** setup (run from source with `npm run dev`).
 > The [fast path](#fast-path-one-command-all-platforms) instead runs Switchyard
@@ -386,9 +386,15 @@ npm run dev          # http://localhost:3001
 #   Path B (Windows, published on 3300): http://localhost:3300
 DOKPLOY_URL=http://localhost:3000
 
-# The admin account you created at /register.
+# The admin account you created at /register. The dashboard itself does NOT
+# sign in with these (you do, at /login); they only power the
+# /api/health?deep=1 probe and the background metrics collector.
 DOKPLOY_EMAIL=admin@example.com
 DOKPLOY_PASSWORD=change-me
+
+# Required: seals the per-user session cookie. Any long random string, e.g.
+#   node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+SWITCHYARD_SESSION_SECRET=change-me-to-a-long-random-string
 
 # Windows only — Docker Desktop's engine named pipe. The default,
 # /var/run/docker.sock, exists only on Unix hosts; without this line the
