@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { isAgentConfigured } from "@/lib/agent/client";
 import { runAgentTurn, type AgentEvent } from "@/lib/agent/run";
 import { sessionKey } from "@/lib/agent/store";
+import { sessionFromRequest, unauthorized } from "@/lib/session";
 import { SSE_HEADERS } from "@/lib/sse";
 
 export const runtime = "nodejs";
@@ -28,6 +29,10 @@ function toMessages(raw: unknown): Anthropic.MessageParam[] {
  *    signals, then a final `done` event.
  */
 export async function POST(req: Request) {
+  // The proxy only proves a session cookie EXISTS. Verify it before spending
+  // the (shared, process-wide) agent credential on this caller.
+  if (!sessionFromRequest(req)) return unauthorized();
+
   if (!isAgentConfigured()) {
     return Response.json(
       { error: "No Anthropic API key configured — add one at the top of the Agent panel." },

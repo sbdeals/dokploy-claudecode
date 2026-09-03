@@ -1,6 +1,7 @@
 import { isAgentConfigured } from "@/lib/agent/client";
 import { applyStaged } from "@/lib/agent/ops";
 import { listStaged, removeStaged, sessionKey, type StagedChange } from "@/lib/agent/store";
+import { sessionFromRequest, unauthorized } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,9 @@ function publicView(c: StagedChange) {
 
 /** GET -> { configured, changes: [...] } */
 export async function GET(req: Request) {
+  // The proxy only proves a session cookie EXISTS; verify it before reading
+  // or applying anything.
+  if (!sessionFromRequest(req)) return unauthorized();
   const key = sessionKey(req);
   return Response.json({
     configured: isAgentConfigured(),
@@ -25,6 +29,7 @@ export async function GET(req: Request) {
  *  - discard: remove the (selected) staged changes without executing.
  */
 export async function POST(req: Request) {
+  if (!sessionFromRequest(req)) return unauthorized();
   const key = sessionKey(req);
   let body: { action?: string; ids?: unknown };
   try {

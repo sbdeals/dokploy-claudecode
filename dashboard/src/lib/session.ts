@@ -10,7 +10,13 @@
  *
  * The proxy (src/proxy.ts) only checks for the cookie's *presence* (it mirrors
  * SESSION_COOKIE as a literal to stay crypto-free); real validation happens
- * here, on the request path that actually serves data.
+ * here, on the request path that actually serves data. That validation also
+ * enforces the session's age SERVER-SIDE: a token whose sealed `iat` is older
+ * than SESSION_MAX_AGE is rejected even if a browser still sends it, so the
+ * cookie's Max-Age is a convenience, not the security boundary.
+ *
+ * Route handlers that don't go through `lib/dokploy.ts#request()` (which
+ * validates the cookie itself) gate on `sessionFromRequest()` + `unauthorized()`.
  *
  * KEEP IN SYNC: the desktop app mints this exact cookie format for auto-login
  * (desktop/src/main/autologin.ts) — changing the seal layout, cookie name, or
@@ -25,12 +31,19 @@ export const SESSION_COOKIE = "switchyard_session";
 /** How long a Switchyard session cookie lives (Dokploy's own session may expire sooner). */
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
+/**
+ * How far in the future an `iat` may sit before the token is rejected. A real
+ * token is never issued in the future; this only absorbs clock skew between
+ * the desktop app (which mints cookies itself) and the dashboard container.
+ */
+const MAX_FUTURE_SKEW_MS = 5 * 60_000;
+
 export interface SwitchyardSession {
   /** The Dokploy session cookie ("name=value; ..."), server-side only. */
   dokployCookie: string;
   /** The Dokploy account email — used for display, not authorization. */
   email: string;
-  /** Issued-at, epoch milliseconds. */
+  /** Issued-at, epoch milliseconds. Enforced against SESSION_MAX_AGE on every open. */
   iat: number;
 }
 
@@ -60,8 +73,12 @@ export function sealSession(session: SwitchyardSession): string {
   return Buffer.concat([iv, cipher.getAuthTag(), ct]).toString("base64url");
 }
 
-/** Reverse of sealSession. Returns null on any tampering, wrong key, or bad shape. */
-export function openSession(token: string | undefined): SwitchyardSession | null {
+/**
+ * Reverse of sealSession. Returns null on any tampering, wrong key, bad shape,
+ * or an `iat` outside the accepted window (expired, or implausibly in the
+ * future). `now` is injectable for tests.
+ */
+export function openSession(token: string | undefined, now: number = Date.now()): SwitchyardSession | null {
   if (!token) return null;
   try {
     const buf = Buffer.from(token, "base64url");
@@ -76,12 +93,50 @@ export function openSession(token: string | undefined): SwitchyardSession | null
     if (
       !parsed ||
       typeof parsed.dokployCookie !== "string" ||
-      typeof parsed.email !== "string"
+      typeof parsed.email !== "string" ||
+      typeof parsed.iat !== "number" ||
+      !Number.isFinite(parsed.iat)
     ) {
       return null;
     }
+    // Server-side expiry: the browser's cookie Max-Age is advisory only.
+    if (now - parsed.iat > SESSION_MAX_AGE * 1000) return null;
+    if (parsed.iat - now > MAX_FUTURE_SKEW_MS) return null;
     return parsed;
   } catch {
     return null;
   }
+}
+
+/** Value of the named cookie from a raw `Cookie` request header, if present. */
+function cookieValue(header: string | null, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
+    const raw = part.slice(eq + 1).trim();
+    // The token is base64url (cookie-safe), but tolerate a percent-encoded copy.
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The verified session carried by a Route Handler request, or null when the
+ * cookie is missing, forged, or expired. This is the gate for routes that
+ * serve data without going through `lib/dokploy.ts#request()` — the proxy
+ * only proves a cookie EXISTS, not that it is ours.
+ */
+export function sessionFromRequest(req: Request): SwitchyardSession | null {
+  return openSession(cookieValue(req.headers.get("cookie"), SESSION_COOKIE));
+}
+
+/** The uniform 401 for API routes whose caller has no verified session. */
+export function unauthorized(): Response {
+  return Response.json({ error: "Not signed in. Sign in at /login." }, { status: 401 });
 }

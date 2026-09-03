@@ -12,6 +12,7 @@ import {
   setRuntimeKey,
   setRuntimeModel,
 } from "@/lib/agent/key-store";
+import { sessionFromRequest, unauthorized } from "@/lib/session";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -65,15 +66,10 @@ const PROVIDER_PRESETS = [
   { id: "custom", label: "Custom / other", baseUrl: "", keyHint: "", models: [] },
 ] as const;
 
-// The proxy already gates these routes behind the dashboard login; this
-// double-checks the session cookie actually exists before touching the key.
-function assertSession(req: Request): Response | null {
-  const cookie = req.headers.get("cookie") ?? "";
-  if (!/(?:^|;\s*)switchyard_session=/.test(cookie)) {
-    return Response.json({ error: "Not signed in." }, { status: 401 });
-  }
-  return null;
-}
+// The proxy only checks that a session cookie EXISTS. The agent credential
+// store is process-wide (one key for every user of this dashboard), so each
+// handler below opens and verifies the sealed cookie before touching it — a
+// forged `switchyard_session=x` must not be able to set the key everyone uses.
 
 function status() {
   const resolved = resolveAgentKey();
@@ -94,8 +90,7 @@ function status() {
 
 /** GET -> credential + provider status (never the key itself). */
 export async function GET(req: Request) {
-  const denied = assertSession(req);
-  if (denied) return denied;
+  if (!sessionFromRequest(req)) return unauthorized();
   return Response.json(status());
 }
 
@@ -109,8 +104,7 @@ export async function GET(req: Request) {
  * All take effect immediately, no restart.
  */
 export async function POST(req: Request) {
-  const denied = assertSession(req);
-  if (denied) return denied;
+  if (!sessionFromRequest(req)) return unauthorized();
 
   let body: { key?: unknown; model?: unknown; provider?: unknown; baseUrl?: unknown; clear?: unknown };
   try {
