@@ -1,6 +1,6 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { signInToDokploy, signUpToDokploy } from "@/lib/dokploy";
@@ -42,10 +42,21 @@ async function establishSession(email: string, password: string): Promise<LoginS
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE,
+    // The dashboard itself speaks plain HTTP (127.0.0.1 by default, no TLS), so
+    // the cookie can't be Secure unconditionally — the default localhost login
+    // would never be sent. Behind an HTTPS proxy that sets x-forwarded-proto we
+    // do mark it Secure, so a browser never replays the session over plain HTTP.
+    secure: await requestIsHttps(),
   });
 
   // Outside the try/catch: redirect() throws NEXT_REDIRECT by design.
   redirect("/");
+}
+
+/** True when the proxy in front of us terminated TLS (first x-forwarded-proto value). */
+async function requestIsHttps(): Promise<boolean> {
+  const proto = (await headers()).get("x-forwarded-proto") ?? "";
+  return proto.split(",")[0].trim().toLowerCase() === "https";
 }
 
 /** Sign in with the user's OWN Dokploy account. */
