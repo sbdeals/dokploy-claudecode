@@ -6,7 +6,9 @@
  * Dokploy session cookie inside a sealed Switchyard session cookie and use it
  * for every request THAT user makes (`request()` -> `userCookie()`, read from
  * next/headers). The raw Dokploy cookie never reaches the browser. On a Dokploy
- * 401 we bounce the user to /login rather than escalating privilege.
+ * 401 we bounce the user to /login rather than escalating privilege. Logout
+ * calls `signOutOfDokploy` so the Dokploy session itself is invalidated and
+ * every sealed copy of it dies with it, not just the browser's cookie.
  *
  * The env admin credentials (`DOKPLOY_EMAIL`/`DOKPLOY_PASSWORD`) serve exactly
  * two SYSTEM purposes: the self-probe `ping()` behind /api/health?deep=1,
@@ -301,14 +303,19 @@ export interface ProjectNode {
  * (src/app/login/actions.ts) and the admin system probe below.
  */
 /** better-auth POST that walks the origin candidates on INVALID_ORIGIN. */
-async function authFetch(path: string, payload: unknown): Promise<Response> {
+async function authFetch(
+  path: string,
+  payload: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<Response> {
   let res: Response | null = null;
   for (const origin of originCandidates()) {
     res = await fetch(`${BASE}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Origin: origin },
+      headers: { "Content-Type": "application/json", Origin: origin, ...extraHeaders },
       body: JSON.stringify(payload),
       cache: "no-store",
+      signal: AbortSignal.timeout(DOKPLOY_TIMEOUT_MS),
     });
     if (await isInvalidOrigin(res)) continue;
     workingOrigin = origin;
@@ -331,6 +338,20 @@ export async function signInToDokploy(email: string, password: string): Promise<
     .split(/,(?=[^;]+=[^;]+)/)
     .map((c) => c.split(";")[0].trim())
     .join("; ");
+}
+
+/**
+ * Invalidate a Dokploy session server-side (better-auth sign-out), sending the
+ * session's own cookie. Logout uses this so a sealed Switchyard cookie that
+ * wraps this Dokploy session stops working everywhere, not only in the browser
+ * that signed out. Throws on a non-2xx; the caller decides how hard to fail.
+ */
+export async function signOutOfDokploy(dokployCookie: string): Promise<void> {
+  const res = await authFetch("/api/auth/sign-out", {}, { Cookie: dokployCookie });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Dokploy sign-out failed (${res.status}): ${body.slice(0, 200)}`);
+  }
 }
 
 /**
@@ -381,6 +402,21 @@ async function userCookie(): Promise<string> {
 type ReqInit = { method?: "GET" | "POST"; body?: unknown };
 
 /**
+ * A Dokploy 401 means the session we sent is gone. Under the system session
+ * there is no request to redirect: drop the cached admin cookie (the next
+ * `withSystemSession` signs in afresh) and throw so the background caller
+ * skips this cycle. On a user request, bounce them to /login. Shared by every
+ * cookie-authenticated fetch in this file (`request()`, `restoreBackup()`).
+ */
+function rejectUnauthorized(path: string): never {
+  if (systemSession.getStore()) {
+    adminCookieCache = null;
+    throw new Error(`Dokploy ${path} rejected the system session (401).`);
+  }
+  redirect("/login");
+}
+
+/**
  * User-serving Dokploy request. Threads the per-user cookie via next/headers so
  * the call signature stays `request(path, init)` for every existing caller. On
  * a Dokploy 401 the user's session has expired -> redirect to /login (we do NOT
@@ -423,16 +459,7 @@ export async function request<T>(path: string, init: ReqInit = {}): Promise<T> {
     }
     throw e;
   }
-  if (res.status === 401) {
-    if (systemSession.getStore()) {
-      // The admin session expired mid-run. There is no request to redirect, so
-      // drop the cached cookie (the next withSystemSession signs in afresh)
-      // and let the background caller skip this cycle.
-      adminCookieCache = null;
-      throw new Error(`Dokploy ${path} rejected the system session (401).`);
-    }
-    redirect("/login");
-  }
+  if (res.status === 401) rejectUnauthorized(path);
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Dokploy ${path} failed (${res.status}): ${body.slice(0, 300)}`);
@@ -2057,7 +2084,7 @@ export async function restoreBackup(input: RestoreBackupInput): Promise<void> {
     headers: { Accept: "text/event-stream", Origin: workingOrigin, Cookie: await userCookie() },
     cache: "no-store",
   });
-  if (res.status === 401) redirect("/login");
+  if (res.status === 401) rejectUnauthorized("backup.restoreBackupWithLogs");
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Dokploy restore failed (${res.status}): ${body.slice(0, 300)}`);

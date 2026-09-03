@@ -18,6 +18,11 @@
  * Route handlers that don't go through `lib/dokploy.ts#request()` (which
  * validates the cookie itself) gate on `sessionFromRequest()` + `unauthorized()`.
  *
+ * Logout (`app/login/actions.ts#logoutAction`) does more than delete the
+ * browser's cookie: it asks Dokploy to invalidate the sealed Dokploy session
+ * (`lib/dokploy.ts#signOutOfDokploy`), so every other copy of the cookie stops
+ * working too — its next Dokploy call gets a 401 and is bounced to /login.
+ *
  * KEEP IN SYNC: the desktop app mints this exact cookie format for auto-login
  * (desktop/src/main/autologin.ts) — changing the seal layout, cookie name, or
  * payload shape breaks it.
@@ -139,4 +144,24 @@ export function sessionFromRequest(req: Request): SwitchyardSession | null {
 /** The uniform 401 for API routes whose caller has no verified session. */
 export function unauthorized(): Response {
   return Response.json({ error: "Not signed in. Sign in at /login." }, { status: 401 });
+}
+
+/**
+ * Whether the session cookie should carry the `Secure` attribute.
+ *
+ * The dashboard itself speaks plain HTTP (127.0.0.1 by default), so an
+ * unconditional `Secure` would mean the default localhost login never sends the
+ * cookie at all. It is set when the request arrived over HTTPS according to the
+ * first `X-Forwarded-Proto` value (an HTTPS reverse proxy in front), or
+ * unconditionally when `SWITCHYARD_ASSUME_HTTPS` is on (`1`/`true`/`on`), the
+ * explicit opt-in for proxies that terminate TLS but do not send that header.
+ * Pure so it can be tested without a request.
+ */
+export function shouldSecureCookie(
+  forwardedProto: string | null | undefined,
+  assumeHttps: string | undefined,
+): boolean {
+  if (/^(1|true|on)$/i.test((assumeHttps ?? "").trim())) return true;
+  const first = (forwardedProto ?? "").split(",")[0].trim().toLowerCase();
+  return first === "https";
 }

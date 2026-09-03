@@ -6,6 +6,7 @@ import {
   openSession,
   sealSession,
   sessionFromRequest,
+  shouldSecureCookie,
   unauthorized,
   type SwitchyardSession,
 } from "./session";
@@ -116,5 +117,34 @@ describe("unauthorized", () => {
     const res = unauthorized();
     expect(res.status).toBe(401);
     expect(await res.json()).toMatchObject({ error: expect.stringContaining("Not signed in") });
+  });
+});
+
+describe("shouldSecureCookie", () => {
+  it("is Secure when the proxy says the request came in over HTTPS", () => {
+    expect(shouldSecureCookie("https", undefined)).toBe(true);
+    expect(shouldSecureCookie("HTTPS", undefined)).toBe(true);
+    // Chained proxies append: the FIRST value is the client-facing scheme.
+    expect(shouldSecureCookie("https, http", undefined)).toBe(true);
+    expect(shouldSecureCookie("http, https", undefined)).toBe(false);
+  });
+
+  it("is plain with no header (the localhost default)", () => {
+    expect(shouldSecureCookie(null, undefined)).toBe(false);
+    expect(shouldSecureCookie(undefined, undefined)).toBe(false);
+    expect(shouldSecureCookie("", undefined)).toBe(false);
+    expect(shouldSecureCookie("http", undefined)).toBe(false);
+  });
+
+  it("honours the SWITCHYARD_ASSUME_HTTPS opt-in regardless of the header", () => {
+    for (const on of ["1", "true", "TRUE", "on", " on "]) {
+      expect(shouldSecureCookie(null, on)).toBe(true);
+      expect(shouldSecureCookie("http", on)).toBe(true);
+    }
+    for (const off of ["0", "false", "off", "", "yes-please"]) {
+      expect(shouldSecureCookie(null, off)).toBe(false);
+    }
+    // The opt-in never disables the header path.
+    expect(shouldSecureCookie("https", "0")).toBe(true);
   });
 });
