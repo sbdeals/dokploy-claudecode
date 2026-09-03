@@ -211,6 +211,11 @@ itself speaks plain HTTP. Because of that:
   shout at you first. On an internet-reachable machine, put an HTTPS reverse
   proxy in front — credentials and session cookies should not cross networks
   in the clear.
+- Concretely: over plain HTTP the session cookie crosses the network in the
+  clear and anyone who captures it can replay it until it expires (sessions
+  are rejected server-side after 7 days). The cookie is marked `Secure` only
+  when an HTTPS reverse proxy in front sends `X-Forwarded-Proto: https`; with
+  nothing in front, browsers send it over HTTP.
 
 ## Migrating an existing install
 

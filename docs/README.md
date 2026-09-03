@@ -22,4 +22,4 @@ browser ──> Switchyard (Next.js BFF, :3001) ──> Dokploy API (:3000)
 - The **launch scripts** live in [`scripts/`](../scripts/) and are driven by the root [`Makefile`](../Makefile).
 - Screenshots in these docs come from a live local deployment (Dokploy in Docker Swarm + Switchyard in dev mode).
 
-> **Security note:** Switchyard itself has no login. Anyone who can reach its port has full admin over Dokploy, including database passwords and container logs. Keep it on localhost or gate it behind auth before exposing it.
+> **Security note:** Switchyard requires a per-user Dokploy login at `/login`, but a login gate is not TLS. A signed-in user holds full admin over Dokploy, including database passwords and container logs, and the dashboard speaks plain HTTP. Keep it on localhost (the default) or put an HTTPS proxy in front before exposing it.
