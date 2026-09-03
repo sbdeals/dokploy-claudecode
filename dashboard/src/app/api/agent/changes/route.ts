@@ -13,9 +13,10 @@ function publicView(c: StagedChange) {
 /** GET -> { configured, changes: [...] } */
 export async function GET(req: Request) {
   // The proxy only proves a session cookie EXISTS; verify it before reading
-  // or applying anything.
-  if (!sessionFromRequest(req)) return unauthorized();
-  const key = sessionKey(req);
+  // or applying anything. The queue is partitioned by the verified session.
+  const session = sessionFromRequest(req);
+  if (!session) return unauthorized();
+  const key = sessionKey(session);
   return Response.json({
     configured: isAgentConfigured(),
     changes: listStaged(key).map(publicView),
@@ -29,8 +30,9 @@ export async function GET(req: Request) {
  *  - discard: remove the (selected) staged changes without executing.
  */
 export async function POST(req: Request) {
-  if (!sessionFromRequest(req)) return unauthorized();
-  const key = sessionKey(req);
+  const session = sessionFromRequest(req);
+  if (!session) return unauthorized();
+  const key = sessionKey(session);
   let body: { action?: string; ids?: unknown };
   try {
     body = await req.json();

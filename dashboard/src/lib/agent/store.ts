@@ -11,6 +11,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
 
+import type { SwitchyardSession } from "@/lib/session";
+
 /** The kinds of operation that must be staged rather than executed. */
 export type StagedKind = "delete_service" | "stop_service" | "delete_domain" | "delete_mount";
 
@@ -34,17 +36,15 @@ const rt: StagedRuntime =
   g.__switchyardAgentStaged ?? (g.__switchyardAgentStaged = { byKey: new Map() });
 
 /**
- * Derive a stable per-user key from the request cookies. The dashboard's
- * per-user login (when present) sets a `switchyard_session` cookie; we hash it
- * so the raw session value is never used as a map key. When no such cookie
- * exists (single-tenant admin-BFF deployments), everyone shares one key — which
- * matches how the rest of the dashboard already behaves.
+ * Derive a stable per-login key from the VERIFIED session — the opened seal
+ * (`sessionFromRequest`), never the raw cookie header, which a caller could
+ * vary by re-encoding it. The Dokploy session token is hashed so the raw value
+ * is never used as a map key. Two browsers signed into the same account hold
+ * different Dokploy sessions and therefore separate queues, matching the
+ * per-browser agent conversation that produced the changes.
  */
-export function sessionKey(req: Request): string {
-  const cookie = req.headers.get("cookie") ?? "";
-  const match = cookie.match(/(?:^|;\s*)switchyard_session=([^;]+)/);
-  const raw = match ? match[1] : cookie || "anonymous";
-  return createHash("sha256").update(raw).digest("hex").slice(0, 32);
+export function sessionKey(session: SwitchyardSession): string {
+  return createHash("sha256").update(session.dokployCookie).digest("hex").slice(0, 32);
 }
 
 export function listStaged(key: string): StagedChange[] {

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   ),
   applyStaged: vi.fn(),
   getOpenAI: vi.fn(),
+  sessionKey: vi.fn(() => "k"),
 }));
 
 vi.mock("@/lib/agent/oauth", () => ({
@@ -37,7 +38,7 @@ vi.mock("@/lib/agent/client", () => ({
 vi.mock("@/lib/agent/run", () => ({ runAgentTurn: mocks.runAgentTurn }));
 vi.mock("@/lib/agent/ops", () => ({ applyStaged: mocks.applyStaged }));
 vi.mock("@/lib/agent/store", () => ({
-  sessionKey: () => "k",
+  sessionKey: mocks.sessionKey,
   listStaged: () => [],
   removeStaged: () => [],
 }));
@@ -128,5 +129,28 @@ describe("agent routes still serve a verified session", () => {
     const res = await call(changes.GET, valid(), "GET");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ configured: true, changes: [] });
+  });
+});
+
+describe("agent routes partition the staged queue by the VERIFIED session", () => {
+  const verified = expect.objectContaining({ dokployCookie: "sess=u1", email: "u1@example.com" });
+
+  it("POST /api/agent/chat passes the opened session to sessionKey", async () => {
+    await call(chat.POST, valid(), "POST", { messages: [{ role: "user", content: "hello" }] });
+    expect(mocks.sessionKey).toHaveBeenCalledWith(verified);
+    expect(mocks.runAgentTurn).toHaveBeenCalledWith(expect.anything(), "k", expect.any(Function));
+  });
+
+  it("GET + POST /api/agent/changes pass the opened session to sessionKey", async () => {
+    await call(changes.GET, valid(), "GET");
+    await call(changes.POST, valid(), "POST", { action: "discard" });
+    expect(mocks.sessionKey).toHaveBeenCalledTimes(2);
+    for (const c of mocks.sessionKey.mock.calls) expect(c[0]).toEqual(verified);
+  });
+
+  it("a forged cookie never reaches sessionKey", async () => {
+    await call(changes.GET, FORGED, "GET");
+    await call(chat.POST, FORGED, "POST", { messages: [{ role: "user", content: "hello" }] });
+    expect(mocks.sessionKey).not.toHaveBeenCalled();
   });
 });

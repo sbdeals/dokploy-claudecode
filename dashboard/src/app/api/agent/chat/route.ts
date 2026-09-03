@@ -31,7 +31,8 @@ function toMessages(raw: unknown): Anthropic.MessageParam[] {
 export async function POST(req: Request) {
   // The proxy only proves a session cookie EXISTS. Verify it before spending
   // the (shared, process-wide) agent credential on this caller.
-  if (!sessionFromRequest(req)) return unauthorized();
+  const session = sessionFromRequest(req);
+  if (!session) return unauthorized();
 
   if (!isAgentConfigured()) {
     return Response.json(
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "No messages provided." }, { status: 400 });
   }
 
-  const key = sessionKey(req);
+  const key = sessionKey(session);
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
