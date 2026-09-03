@@ -42,6 +42,7 @@ test("configs written by older CLIs gain new defaults", () => {
     assert.equal(config.dashboardPort, 4000);
     assert.equal(config.dokployPort, 3000); // default filled in
     assert.equal(config.image, "ghcr.io/sbdeals/switchyard");
+    assert.equal(config.assumeHttps, false); // added after 0.1.3; off for existing installs
   });
 });
 
@@ -56,6 +57,8 @@ test("coerceConfigValue types and errors", () => {
   assert.equal(coerceConfigValue("dashboardPort", "3101"), 3101);
   assert.equal(coerceConfigValue("expose", "true"), true);
   assert.equal(coerceConfigValue("expose", "0"), false);
+  assert.equal(coerceConfigValue("assumeHttps", "true"), true);
+  assert.equal(coerceConfigValue("assumeHttps", "false"), false);
   assert.equal(coerceConfigValue("adminEmail", "a@b.co"), "a@b.co");
   assert.throws(() => coerceConfigValue("dashboardPort", "abc"), /integer/);
   assert.throws(() => coerceConfigValue("expose", "maybe"), /true or false/);

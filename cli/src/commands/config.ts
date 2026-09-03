@@ -70,6 +70,11 @@ export async function configCommand(
       if (k === "sessionSecret") {
         p.log.warn("Rotating sessionSecret signs out every logged-in user on the next container recreate.");
       }
+      if (k === "assumeHttps" && coerced === true) {
+        p.log.warn(
+          "assumeHttps=true marks the session cookie Secure unconditionally. Only use it behind an HTTPS proxy that terminates TLS: over plain HTTP the browser drops the cookie and nobody can sign in.",
+        );
+      }
       (cfg as Record<ConfigKey, unknown>)[k] = coerced;
       saveConfig(cfg, path);
       p.log.success(`${k} = ${SECRET_KEYS.includes(k) && !flags.showSecrets ? "********" : String(coerced)} (saved to ${path})`);

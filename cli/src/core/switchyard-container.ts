@@ -48,6 +48,9 @@ export function renderContainer(cfg: SwitchyardConfig, cliVersion: string): Cont
   // when non-empty so an unset value leaves the hash (and Docker Desktop
   // containers) unchanged; a changed IP recreates the container.
   if (cfg.hostIp) env.SWITCHYARD_HOST_IP = cfg.hostIp;
+  // Force the Secure attribute on the session cookie for TLS proxies that omit
+  // X-Forwarded-Proto. Added only when on, so the default hash is unchanged.
+  if (cfg.assumeHttps) env.SWITCHYARD_ASSUME_HTTPS = "1";
   const spec = {
     image,
     network: NETWORK_NAME,
