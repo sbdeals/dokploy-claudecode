@@ -36,7 +36,7 @@ The BFF exists so that credentials never reach the browser. [`src/lib/dokploy.ts
 
 - **Per-user session sign-in.** The user's `/login` POST goes to Dokploy's `/api/auth/sign-in/email`; the returned Dokploy cookie is trimmed to its `name=value` pairs and sealed inside the encrypted Switchyard session cookie (see the security model below). The raw Dokploy cookie and the user's credentials never reach the browser.
 - **Request wrapper.** Every call goes through `request()`, which reads the current user's Dokploy cookie from the request context (`next/headers`) and sends JSON with `cache: "no-store"`, so Next never caches Dokploy responses. On a `401` the user's Dokploy session has expired and they are redirected to `/login` — there is deliberately no silent fallback to an admin session.
-- **System session.** The env admin credentials (`DOKPLOY_EMAIL` / `DOKPLOY_PASSWORD`) power exactly two things: `ping()` behind `/api/health?deep=1`, so the installer can verify the container → Dokploy path before anyone has logged in, and the background metrics/logs collector, which runs between requests and has no user session to borrow. They never serve a user request. When they are unset the probe fails and the collector logs once and stays off.
+- **System session.** The env admin credentials (`DOKPLOY_EMAIL` / `DOKPLOY_PASSWORD`) power exactly two things: `ping()` behind `/api/health?deep=1`, so the installer can verify the container → Dokploy path before anyone has logged in, and the background metrics/logs collector, which runs on a timer and must not borrow the session of whichever user happened to trigger the first render. They never serve a user request. When they are unset the probe fails and the collector logs once and stays off.
 - **Upgrade path.** Dokploy also supports an `x-api-key` token, gated behind the member `canAccessToAPI` permission. Switching to it means changing only `request()`; no caller is touched.
 
 ## Data model and service listing
@@ -133,8 +133,10 @@ mode), persistence is simply off and live behaviour is unchanged.
   `page.tsx`). Every interval it samples stats and tails logs for *all* known
   services — tab open or not — writes rollups, and feeds a crash-loop detector.
   It lists services under the system session (`DOKPLOY_EMAIL` /
-  `DOKPLOY_PASSWORD`), never under whichever user triggered the first render:
-  later ticks run outside any request, so there is no user cookie to borrow.
+  `DOKPLOY_PASSWORD`), never under whichever user triggered the first render.
+  (Timers inherit that request's async context, so before this the collector
+  kept using the first user's cookie for every tick and failed silently once
+  that Dokploy session expired.)
   Without those credentials it logs once and stays off.
 - **History API** ([`/api/services/metrics/history`](../dashboard/src/app/api/services/metrics/history/route.ts)):
   queries rollups over a time range; `MetricsTab` seeds from it (so history

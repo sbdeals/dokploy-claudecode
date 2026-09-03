@@ -8,16 +8,20 @@
  * next/headers). The raw Dokploy cookie never reaches the browser. On a Dokploy
  * 401 we bounce the user to /login rather than escalating privilege.
  *
- * The env admin credentials (`DOKPLOY_EMAIL`/`DOKPLOY_PASSWORD`) survive for a
- * SINGLE purpose: the system self-probe `ping()` behind /api/health?deep=1,
- * which the installer uses to prove the container -> Dokploy path. That admin
- * session is never used to serve user requests.
+ * The env admin credentials (`DOKPLOY_EMAIL`/`DOKPLOY_PASSWORD`) serve exactly
+ * two SYSTEM purposes: the self-probe `ping()` behind /api/health?deep=1,
+ * which the installer uses to prove the container -> Dokploy path, and the
+ * background collector (`withSystemSession`), which samples every service
+ * from a timer and must not run on whichever user's cookie happened to start
+ * it. That admin session is never used to serve a user's request.
  *
  * Dokploy models a database as a service nested under project -> environment.
  * `project.all` returns the tree but trims nested service objects down to their
  * IDs, so we enrich each database via `<engine>.one`.
  */
 import "server-only";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -348,12 +352,26 @@ export async function signUpToDokploy(
 }
 
 /**
- * The CURRENT user's Dokploy cookie, read from the sealed Switchyard session.
+ * Background work (the collector, lib/collector.ts) runs from a timer. Timers
+ * inherit the async context of the request that created them, so without this
+ * the collector would keep using the FIRST user's cookie for every tick (and
+ * fail silently once that Dokploy session expired); where no context
+ * propagates, `cookies()` throws instead. `withSystemSession` stores the env
+ * admin cookie here for the duration of that work; `userCookie()` prefers it
+ * when present. Nothing on a request path ever populates this.
+ */
+const systemSession = new AsyncLocalStorage<string>();
+
+/**
+ * The CURRENT user's Dokploy cookie, read from the sealed Switchyard session
+ * (or the system session when running inside `withSystemSession`).
  * The proxy blocks anonymous requests up front, so reaching here without a
  * valid session means the cookie is forged/expired -> send them to /login.
  * `redirect()` throws NEXT_REDIRECT (never returns), so the return type holds.
  */
 async function userCookie(): Promise<string> {
+  const system = systemSession.getStore();
+  if (system) return system;
   const store = await cookies();
   const session = openSession(store.get(SESSION_COOKIE)?.value);
   if (!session) redirect("/login");
@@ -405,7 +423,16 @@ export async function request<T>(path: string, init: ReqInit = {}): Promise<T> {
     }
     throw e;
   }
-  if (res.status === 401) redirect("/login");
+  if (res.status === 401) {
+    if (systemSession.getStore()) {
+      // The admin session expired mid-run. There is no request to redirect, so
+      // drop the cached cookie (the next withSystemSession signs in afresh)
+      // and let the background caller skip this cycle.
+      adminCookieCache = null;
+      throw new Error(`Dokploy ${path} rejected the system session (401).`);
+    }
+    redirect("/login");
+  }
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Dokploy ${path} failed (${res.status}): ${body.slice(0, 300)}`);
@@ -414,15 +441,37 @@ export async function request<T>(path: string, init: ReqInit = {}): Promise<T> {
   return (text ? JSON.parse(text) : null) as T;
 }
 
-// --- system probe (admin session) -------------------------------------------
-// The ONLY consumer of the env admin credentials. Kept fully separate from the
-// user-serving path above so an anonymous /api/health?deep=1 probe still works.
+// --- system session (admin) --------------------------------------------------
+// The ONLY consumers of the env admin credentials: the /api/health?deep=1
+// probe and the background collector. Kept fully separate from the
+// user-serving path above so an anonymous deep-health probe still works and a
+// user's request can never be served with admin privileges.
 
 let adminCookieCache: string | null = null;
 
+/** True when the env admin credentials exist (the collector needs them). */
+export function hasSystemCredentials(): boolean {
+  return Boolean(EMAIL && PASSWORD);
+}
+
 async function adminSignIn(): Promise<string> {
+  if (!hasSystemCredentials()) {
+    throw new Error("DOKPLOY_EMAIL / DOKPLOY_PASSWORD are not set — no system session is available.");
+  }
   adminCookieCache = await signInToDokploy(EMAIL, PASSWORD);
   return adminCookieCache;
+}
+
+/**
+ * Run `fn` as the SYSTEM (env admin) session: every `request()` it makes
+ * carries the admin cookie instead of a user's. For background work only
+ * (lib/collector.ts) — never call this from a request handler, which would
+ * escalate whoever is calling to admin. The admin cookie is cached across
+ * calls; a 401 inside `fn` clears it so the next call signs in afresh.
+ */
+export async function withSystemSession<T>(fn: () => Promise<T>): Promise<T> {
+  const cookie = adminCookieCache ?? (await adminSignIn());
+  return systemSession.run(cookie, fn);
 }
 
 /**
@@ -2151,23 +2200,50 @@ export async function loadWorkspace(): Promise<{
 
 /**
  * The set of Swarm `appName`s the CURRENT user's Dokploy workspace manages.
- * The logs/metrics routes validate the requested `?app=` against this before
- * attaching to a container, so an authed user can't tail arbitrary host
- * containers by name. Uses the per-user session (via `request()`).
+ * The logs/metrics/exec/postgres routes validate the requested `?app=` against
+ * this before attaching to a container, so an authed user can't reach
+ * arbitrary host containers by name. Uses the per-user session (via
+ * `request()`).
+ *
+ * Briefly cached so metrics-style routes that poll every ~20s don't re-walk
+ * the whole Dokploy tree on each request. The cache is keyed PER SESSION — a
+ * hash of the caller's Dokploy cookie, never the cookie itself. A single
+ * shared entry would hand user B the allow-list computed for user A, and that
+ * allow-list is the only thing standing between an authed user and containers
+ * Dokploy does not show them.
  */
-// Briefly cached so metrics-style routes that poll every ~20s don't re-walk
-// the whole Dokploy tree on each request.
-let appNamesCache: { at: number; names: Set<string> } | null = null;
+const appNamesCache = new Map<string, { at: number; names: Set<string> }>();
 const APP_NAMES_TTL_MS = 30_000;
+const APP_NAMES_CACHE_MAX = 64;
+const SYSTEM_APP_NAMES_KEY = "system";
+
+async function appNamesCacheKey(): Promise<string> {
+  if (systemSession.getStore()) return SYSTEM_APP_NAMES_KEY;
+  // userCookie() redirects to /login (throws) when the session is invalid, so
+  // a forged cookie never reaches the cache lookup.
+  return createHash("sha256").update(await userCookie()).digest("hex").slice(0, 32);
+}
 
 export async function knownAppNames(): Promise<Set<string>> {
+  const key = await appNamesCacheKey();
   const now = Date.now();
-  if (appNamesCache && now - appNamesCache.at < APP_NAMES_TTL_MS) {
-    return appNamesCache.names;
-  }
+  const hit = appNamesCache.get(key);
+  if (hit && now - hit.at < APP_NAMES_TTL_MS) return hit.names;
+
   const { services } = await loadWorkspace();
   const names = new Set(services.map((s) => s.appName).filter((n): n is string => Boolean(n)));
-  appNamesCache = { at: now, names };
+
+  // Keep the map bounded: drop expired entries, then the oldest (Map iterates
+  // in insertion order) until there is room.
+  for (const [k, v] of appNamesCache) {
+    if (now - v.at >= APP_NAMES_TTL_MS) appNamesCache.delete(k);
+  }
+  while (appNamesCache.size >= APP_NAMES_CACHE_MAX) {
+    const oldest = appNamesCache.keys().next().value;
+    if (oldest === undefined) break;
+    appNamesCache.delete(oldest);
+  }
+  appNamesCache.set(key, { at: now, names });
   return names;
 }
 
