@@ -30,7 +30,7 @@ program
   .description("Install/converge the whole stack (idempotent — also upgrades)")
   .option("--dokploy-port <port>", "host port for Dokploy (default 3000; adopted from an existing install)", parsePort)
   .option("--dashboard-port <port>", "host port for the Switchyard dashboard (default 3001)", parsePort)
-  .option("--expose", "publish the dashboard on all interfaces (NO auth — requires confirmation)")
+  .option("--expose", "publish the dashboard on all interfaces (login required, but no TLS; requires confirmation)")
   .option("--skip-traefik", "don't run the Traefik proxy (domains won't route)")
   .option("--tag <tag>", "Switchyard image tag (default: the CLI version)")
   .option("--email <email>", "Dokploy admin email")

@@ -18,7 +18,7 @@ export interface SwitchyardConfig {
   dokployPort: number;
   /** Host port the Switchyard container is published on. */
   dashboardPort: number;
-  /** false = bind 127.0.0.1 (default; the dashboard has no auth). */
+  /** false = bind 127.0.0.1 (default; the dashboard has a login but no TLS). */
   expose: boolean;
   /** Skip the Traefik proxy (defaults true on Docker Desktop, false on Linux). */
   skipTraefik: boolean;

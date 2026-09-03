@@ -13,7 +13,7 @@
     "directory": "desktop"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "scripts": {
     "icons": "node scripts/gen-icon.mjs",

@@ -381,7 +381,7 @@ async function ensureAdmin(cfg: SwitchyardConfig, base: string, interactive: boo
   } else if (!interactive) {
     throw new UserError("No admin credentials available. Re-run with --email and --password.");
   } else {
-    info("This Dokploy install already exists — enter its admin credentials (Switchyard signs in with them).");
+    info("This Dokploy install already exists — enter its admin credentials (used for the health probe, the metrics collector, and desktop auto-login).");
   }
 
   for (let i = 0; i < 3; i++) {
